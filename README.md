@@ -73,3 +73,5 @@ Kalıcı veritabanı istenirse Supabase migration çalıştırıldıktan sonra u
 
 İstenirse `supabase/migrations/202607220001_create_112_scheduler.sql` dosyasındaki migration çalıştırılarak kalıcı veritabanı altyapısı kurulabilir. Mevcut sürüm localStorage ile çalışır.
 
+
+.
