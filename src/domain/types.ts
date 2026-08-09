@@ -7,7 +7,12 @@ export type StaffTitle =
   | "Sürücü ATT"
   | "Sürücü Paramedik";
 export type Cadre = "Memur" | "4D İşçi";
-export type LeaveType = "Yıllık izin" | "Rapor" | "Mazeret" | "Eğitim" | "Diğer";
+export type LeaveType = | "Yıllık izin"
+  | "Rapor"
+  | "Resmi görev"
+  | "Mazeret"
+  | "Eğitim"
+  | "Diğer";
 export type DutyRequestType = "want" | "avoid";
 export type DutyRole = "doctor" | "chief" | "ysp" | "driver";
 export type DriverShift = "day" | "night" | "full";
