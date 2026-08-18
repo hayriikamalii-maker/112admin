@@ -12,12 +12,14 @@ import {
   FileText,
   FileUp,
   Home,
+  HeartPulse,
   KeyRound,
   LogOut,
   Pencil,
   RotateCcw,
   Save,
   Settings,
+  Siren,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -1245,6 +1247,11 @@ function App() {
           return { ...day, fullDriverId: nextStaffId || undefined, dayDriverId: undefined, nightDriverId: undefined };
         }
         if (field === "dayDriverId" || field === "nightDriverId") {
+          const otherField = field === "dayDriverId" ? "nightDriverId" : "dayDriverId";
+          const selectedStaff = state.staff.find((person) => person.id === nextStaffId);
+          if (nextStaffId && day[otherField] === nextStaffId && selectedStaff?.cadre === "Memur") {
+            return { ...day, fullDriverId: nextStaffId, dayDriverId: undefined, nightDriverId: undefined };
+          }
           return { ...day, [field]: nextStaffId || undefined, fullDriverId: undefined };
         }
         return { ...day, [field]: nextStaffId || undefined };
@@ -1446,6 +1453,12 @@ function App() {
           <Activity className="medical-ekg ekg-one" size={260} strokeWidth={1.4} />
           <Activity className="medical-ekg ekg-two" size={190} strokeWidth={1.2} />
           <Ambulance className="medical-ambulance" size={120} strokeWidth={1.35} />
+          <Siren className="medical-siren" size={82} strokeWidth={1.35} />
+          <HeartPulse className="medical-heart" size={96} strokeWidth={1.3} />
+          <div className="medical-defib">
+            <BriefcaseMedical size={78} strokeWidth={1.25} />
+            <Zap size={34} strokeWidth={1.8} />
+          </div>
           <div className="medical-cross">✚</div>
           <div className="medical-pulse-dot one" />
           <div className="medical-pulse-dot two" />
@@ -3198,12 +3211,15 @@ function SchedulePage(props: {
       if (!canServeRole(person, role, props.station)) return false;
       if (role !== "driver" || !shift) return true;
       if (shift === "full") return canServeDriverShift(person, "full", props.station);
-      return canServeDriverShift(person, shift, props.station);
+      // Manuel düzenlemede memur önce gündüz/gece kutusundan seçilebilir.
+      // Aynı memur diğer yarıya da seçildiğinde satır otomatik 24 saate dönüşür.
+      return person.cadre === "Memur" || canServeDriverShift(person, shift, props.station);
     });
   const invalidAssignment = (person: Staff | undefined, role: DutyRole, shift?: DriverShift) => {
     if (!person) return false;
     if (!canServeRole(person, role, props.station) || isExternal(person)) return true;
     if (role !== "driver" || !shift) return false;
+    if ((shift === "day" || shift === "night") && person.cadre === "Memur") return false;
     return !canServeDriverShift(person, shift, props.station);
   };
   const renderAssignmentCell = (day: ScheduleDay, field: keyof ScheduleDay, shift?: DriverShift) => {
