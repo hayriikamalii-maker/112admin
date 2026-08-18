@@ -1410,7 +1410,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-ui-release="ultra-premium-2026-08-18">
       <aside className="sidebar">
         <div className="logo">
           <span>112</span>
