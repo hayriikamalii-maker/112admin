@@ -69,6 +69,7 @@ import type {
   Schedule,
   ScheduleDay,
   Staff,
+  StaffDuty,
   StaffTitle,
   Station,
   StationType,
@@ -82,6 +83,7 @@ const leaveTypes: LeaveType[] = ["Yıllık izin", "Rapor", "Resmi görev", "Maze
 const officialDutyTypes = ["İlk yardım sınavı", "İlk yardım eğitimi", "Diğer eğitim", "Görevlendirme", "UMKE görevlendirmesi"];
 const months = Array.from({ length: 12 }, (_, index) => index + 1);
 const aiProviders: AiProvider[] = ["local", "gemini", "groq"];
+const staffDuties: StaffDuty[] = ["chief", "ysp", "driver"];
 const assignmentStationId = "__assignment_station__";
 const assignmentStation: Station = {
   id: assignmentStationId,
@@ -136,7 +138,11 @@ function usePath() {
 }
 
 function emptyStaff(stationId: string): Staff {
-  return { id: crypto.randomUUID(), stationId, fullName: "", title: "Paramedik", cadre: "Memur", active: true, overtimeAllowed: false };
+  return { id: crypto.randomUUID(), stationId, fullName: "", title: "Paramedik", duties: [], cadre: "Memur", active: true, overtimeAllowed: false };
+}
+
+function staffDutyLabel(duty: StaffDuty) {
+  return { chief: "Ekip Şefi", ysp: "YSP", driver: "Sürücü" }[duty];
 }
 
 function emptyStation(): Station {
@@ -848,6 +854,70 @@ async function testAiProvider(provider: Exclude<AiProvider, "local">, apiKey: st
   }
 }
 
+async function refineScheduleWithGemini(params: {
+  schedule: Schedule;
+  station: Station;
+  staff: Staff[];
+  leaves: LeaveRequest[];
+  dutyRequests: DutyRequest[];
+  rules: string;
+  apiKey: string;
+}) {
+  if (!params.apiKey.trim()) throw new Error("Gemini API anahtarı eksik");
+  const allowedStaffIds = new Set(params.staff.map((person) => person.id));
+  const prompt = [
+    "Sen 112 acil sağlık hizmetleri nöbet planlama uzmanısın.",
+    "Verilen taslak çizelgeyi izin, istek, dinlenme, kadro ve personelin görev alanlarına göre iyileştir.",
+    "Hiçbir tarihi silme. Yalnızca verilen personel id'lerini kullan. Uygun personel yoksa alanı boş bırak.",
+    "Sadece geçerli JSON döndür: {\"days\":[{\"date\":\"YYYY-MM-DD\",\"chiefId\":\"\",\"yspId\":\"\",\"dayDriverId\":\"\",\"nightDriverId\":\"\",\"fullDriverId\":\"\"}]}",
+    `İstasyon: ${JSON.stringify(params.station)}`,
+    `Personel: ${JSON.stringify(params.staff.map(({ id, fullName, title, duties, cadre, manualTarget }) => ({ id, fullName, title, duties, cadre, manualTarget })))}`,
+    `İzinler: ${JSON.stringify(params.leaves)}`,
+    `Nöbet istekleri: ${JSON.stringify(params.dutyRequests)}`,
+    `Kurallar: ${params.rules}`,
+    `Taslak: ${JSON.stringify({ days: params.schedule.days })}`,
+  ].join("\n");
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 45_000);
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(params.apiKey)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.15 },
+        }),
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) throw new Error(`Gemini ${response.status}`);
+    const payload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+    const raw = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
+    const parsed = JSON.parse(raw) as { days?: ScheduleDay[] };
+    if (!Array.isArray(parsed.days) || parsed.days.length !== params.schedule.days.length) throw new Error("Gemini eksik gün döndürdü");
+    const expectedDates = new Set(params.schedule.days.map((day) => day.date));
+    const fields: Array<keyof ScheduleDay> = ["chiefId", "yspId", "dayDriverId", "nightDriverId", "fullDriverId"];
+    const days = parsed.days.map((day) => {
+      if (!expectedDates.has(day.date)) throw new Error("Gemini geçersiz tarih döndürdü");
+      const clean: ScheduleDay = { date: day.date };
+      for (const field of fields) {
+        const value = day[field];
+        if (typeof value === "string" && value && allowedStaffIds.has(value)) clean[field] = value;
+      }
+      if (clean.fullDriverId) {
+        clean.dayDriverId = undefined;
+        clean.nightDriverId = undefined;
+      }
+      return clean;
+    });
+    return { ...params.schedule, days, autoSnapshot: structuredClone(days), updatedAt: new Date().toISOString() };
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 function isAdmin(user?: AppUser) {
   return user?.role === "admin";
 }
@@ -948,10 +1018,11 @@ function App() {
     }));
   }
 
-  function generate(mode: "auto" | "ai" = "auto") {
+  async function generate(mode: "auto" | "ai" = "auto", scope: "all" | StaffDuty = "all") {
     if (!selectedStation || isAssignmentStation(selectedStation)) return;
     setAiNote("");
-    const nextSchedule = generateSchedule({
+    setGenerationNotice(mode === "ai" ? "Gemini çizelgeyi hazırlıyor..." : "Çizelge hazırlanıyor...");
+    const baseSchedule = generateSchedule({
       station: selectedStation,
       staff: state.staff,
       leaves: state.leaves,
@@ -961,6 +1032,42 @@ function App() {
       year,
       month,
     });
+    let generatedSchedule: Schedule = baseSchedule;
+    let geminiUsed = false;
+    if (mode === "ai") {
+      try {
+        generatedSchedule = await refineScheduleWithGemini({
+          schedule: baseSchedule,
+          station: selectedStation,
+          staff: state.staff.filter((person) => person.stationId === selectedStation.id && person.active),
+          leaves: state.leaves,
+          dutyRequests: state.dutyRequests,
+          rules: state.settings.scheduleRulesText ?? "",
+          apiKey: state.settings.aiApiKeys.gemini ?? "",
+        });
+        geminiUsed = true;
+      } catch {
+        generatedSchedule = baseSchedule;
+      }
+    }
+    const scopeFields: Record<StaffDuty, Array<keyof ScheduleDay>> = {
+      chief: ["chiefId"],
+      ysp: ["yspId"],
+      driver: ["dayDriverId", "nightDriverId", "fullDriverId"],
+    };
+    const nextSchedule = scope === "all" || !activeSchedule
+      ? generatedSchedule
+      : {
+          ...activeSchedule,
+          updatedAt: new Date().toISOString(),
+          days: activeSchedule.days.map((currentDay) => {
+            const generatedDay = generatedSchedule.days.find((day) => day.date === currentDay.date);
+            if (!generatedDay) return currentDay;
+            const nextDay = { ...currentDay };
+            for (const field of scopeFields[scope]) nextDay[field] = generatedDay[field] as never;
+            return nextDay;
+          }),
+        };
     const nextViolations = validateSchedule(
       nextSchedule,
       selectedStation,
@@ -970,14 +1077,6 @@ function App() {
       state.dutyRequests,
       holidays,
     );
-    const criticalViolations = nextViolations.filter((violation) => violation.severity === "critical");
-    if (criticalViolations.length > 0) {
-      const firstMessages = criticalViolations.slice(0, 4).map((violation) => violation.message).join(" ");
-      setGenerationNotice(
-        `Liste oluşturulmadı; mevcut liste korunuyor. İzin, rapor, resmi görev ve zorunlu dinlenme kuralları ihlal edilemez. Düzeltilmesi gereken durumlar: ${firstMessages}`,
-      );
-      return;
-    }
     const requestWarnings = nextViolations.filter((violation) => violation.message.includes("nöbet istemiyor") || violation.message.includes("nöbet istiyor"));
     const requestText = requestWarnings.length
       ? ` ${requestWarnings.length} personel isteği kadro/izin/dinlenme dengesi nedeniyle karşılanamadı; feragat edilen istekler kontrol panelinde gerekçeleriyle listelendi.`
@@ -985,7 +1084,7 @@ function App() {
     const warningText = nextViolations.length ? ` ${nextViolations.length} uyarı var; kontrol panelinden inceleyin.${requestText}` : "";
     setGenerationNotice(
       mode === "ai"
-        ? `Liste AI destekli kural motoruyla yeniden oluşturuldu.${warningText}`
+        ? `${geminiUsed ? "Gemini" : "Yerel güvenli yedek motor"} ${scope === "all" ? "tüm listeyi" : `${staffDutyLabel(scope)} listesini`} oluşturdu.${warningText}`
         : `Liste oluşturuldu.${warningText}`,
     );
     upsertSchedule(nextSchedule);
@@ -1003,7 +1102,7 @@ function App() {
       const least = [...summary].sort((left, right) => left.total - right.total)[0];
       setAiNote(
         [
-          "AI destekli yeniden oluşturma tamamlandı.",
+          geminiUsed ? "Gemini destekli yeniden oluşturma tamamlandı." : "Gemini kullanılamadı; yerel güvenli motor listeyi yine oluşturdu.",
           "Liste izin, istek, kadro ve vardiya kurallarıyla yeniden hesaplandı.",
           most ? `En fazla nöbet: ${most.staff.fullName} (${most.total}).` : "",
           least ? `En az nöbet: ${least.staff.fullName} (${least.total}).` : "",
@@ -1736,6 +1835,7 @@ function StaffPage(props: {
                 <th>Personel</th>
                 <th>Asıl İstasyon</th>
                 <th>Ünvan</th>
+                <th>Görev</th>
                 <th>Kadro</th>
                 <th>Başlangıç</th>
                 <th>Bitiş</th>
@@ -1749,6 +1849,7 @@ function StaffPage(props: {
                   <td>{person.fullName}</td>
                   <td>{props.state.stations.find((station) => station.id === person.stationId)?.name ?? "-"}</td>
                   <td>{person.title}</td>
+                  <td>{person.duties?.length ? person.duties.map(staffDutyLabel).join(", ") : "Ünvana göre"}</td>
                   <td>{person.cadre}</td>
                   <td>{assignment.startDate || "-"}</td>
                   <td>{assignment.indefinite || !assignment.endDate ? "Süresiz" : assignment.endDate}</td>
@@ -1788,6 +1889,17 @@ function StaffPage(props: {
             <option key={titleOption}>{titleOption}</option>
           ))}
         </select>
+        <label>
+          Görevler
+          <select
+            multiple
+            value={draft.duties ?? []}
+            onChange={(event) => setDraft({ ...draft, duties: selectedOptions(event.currentTarget) as StaffDuty[] })}
+          >
+            {staffDuties.map((duty) => <option key={duty} value={duty}>{staffDutyLabel(duty)}</option>)}
+          </select>
+          <span className="helper-text">Birden fazla görev seçilebilir. Seçilmezse ünvan kuralları kullanılır.</span>
+        </label>
         <select value={draft.cadre} onChange={(event) => setDraft({ ...draft, cadre: event.target.value as Cadre })}>
           {cadres.map((cadre) => (
             <option key={cadre}>{cadre}</option>
@@ -1824,6 +1936,7 @@ function StaffPage(props: {
             <tr>
               <th>Personel</th>
               <th>Ünvan</th>
+              <th>Görev</th>
               <th>Kadro</th>
               <th>İzin/Rapor Günü</th>
               <th>Çalışılan Gün</th>
@@ -1849,6 +1962,7 @@ function StaffPage(props: {
                 <tr key={person.id}>
                   <td>{person.fullName}</td>
                   <td>{person.title}</td>
+                  <td>{person.duties?.length ? person.duties.map(staffDutyLabel).join(", ") : "Ünvana göre"}</td>
                   <td>{person.cadre}</td>
                   <td>{leaveDaysForStaff(person, props.year, props.month, props.holidays, props.state.leaves)}</td>
                   <td>{workedDaysForStaff(person, props.year, props.month, props.holidays, props.state.leaves)}</td>
@@ -2808,7 +2922,7 @@ function SchedulePage(props: {
   holidays: PublicHoliday[];
   schedule?: Schedule;
   violations: ReturnType<typeof validateSchedule>;
-  generate: (mode?: "auto" | "ai") => void;
+  generate: (mode?: "auto" | "ai", scope?: "all" | StaffDuty) => Promise<void>;
   clearSchedule: () => void;
   updateAssignment: (date: string, field: keyof ScheduleDay, value: string) => void;
   updateDriverBlock: (date: string, value: string) => void;
@@ -2817,6 +2931,7 @@ function SchedulePage(props: {
   aiNote: string;
   generationNotice: string;
 }) {
+  const [activeTab, setActiveTab] = useState<"all" | StaffDuty>("all");
   const stationStaff = props.state.staff
     .filter((person) => person.stationId === props.station.id && person.active)
     .filter((person) => props.station.type !== "A2" || person.title !== "Doktor")
@@ -2831,8 +2946,19 @@ function SchedulePage(props: {
       return { ...item, target, targetHours, dutyHours, overtimeHours, status };
     })
     : [];
-  const headers = ["Tarih ve Gün", "Ekip Şefi", "YSP", "Gündüz Sürücü", "Gece Sürücü"];
-  const regularFields: (keyof ScheduleDay)[] = ["chiefId", "yspId"];
+  const tabItems: Array<{ id: "all" | StaffDuty; label: string }> = [
+    { id: "all", label: "İstasyon Nöbet Listesi" },
+    { id: "chief", label: "Ekip Şefi Nöbet Listesi" },
+    { id: "ysp", label: "YSP Nöbet Listesi" },
+    { id: "driver", label: "Sürücü Nöbet Listesi" },
+  ];
+  const headers = activeTab === "all"
+    ? ["Tarih ve Gün", "Ekip Şefi", "YSP", "Gündüz Sürücü", "Gece Sürücü"]
+    : activeTab === "chief"
+      ? ["Tarih ve Gün", "Ekip Şefi"]
+      : activeTab === "ysp"
+        ? ["Tarih ve Gün", "YSP"]
+        : ["Tarih ve Gün", "Gündüz Sürücü", "Gece Sürücü"];
   const isExternal = (person: Staff) => isExternallyAssigned(person.id, props.year, props.month, props.state.staffMonthlyAssignments);
   const assignmentOptions = (role: DutyRole, currentValue?: string, shift?: DriverShift) =>
     stationStaff.filter((person) => {
@@ -2871,15 +2997,39 @@ function SchedulePage(props: {
       </td>
     );
   };
+  const renderDriverCells = (day: ScheduleDay) =>
+    day.fullDriverId ||
+    (day.dayDriverId && day.dayDriverId === day.nightDriverId && stationStaff.find((person) => person.id === day.dayDriverId)?.cadre === "Memur") ? (
+      <td
+        colSpan={2}
+        className={invalidAssignment(stationStaff.find((person) => person.id === (day.fullDriverId ?? day.dayDriverId)), "driver", "full") ? "invalid-cell" : ""}
+      >
+        <select value={day.fullDriverId ?? day.dayDriverId ?? ""} onChange={(event) => props.updateDriverBlock(day.date, event.target.value)}>
+          <option value="">Boş</option>
+          {assignmentOptions("driver", day.fullDriverId ?? day.dayDriverId, "full").map((person) => (
+            <option key={person.id} value={person.id}>{person.fullName}{isExternal(person) ? " (dış görevlendirme)" : ""}</option>
+          ))}
+        </select>
+      </td>
+    ) : (
+      <>{renderAssignmentCell(day, "dayDriverId", "day")}{renderAssignmentCell(day, "nightDriverId", "night")}</>
+    );
 
   return (
     <section className="page">
+      <div className="schedule-tabs" role="tablist" aria-label="Nöbet listeleri">
+        {tabItems.map((tab) => (
+          <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
       <div className="toolbar">
-        <button className="primary-button" onClick={() => props.generate()}>Otomatik Oluştur</button>
-        <button type="button" onClick={() => props.generate("ai")}>
+        <button className="primary-button" onClick={() => void props.generate("ai", activeTab)}>
           <Sparkles size={16} />
-          Listeyi AI ile Yeniden Yap
+          {activeTab === "all" ? "Gemini ile Tüm Listeyi Yap" : `Gemini ile ${staffDutyLabel(activeTab)} Listesini Yap`}
         </button>
+        <button type="button" onClick={() => void props.generate("auto", activeTab)}>Hızlı Yedek Oluştur</button>
         <button onClick={props.restoreAuto}>
           <RotateCcw size={16} />
           Son Otomatiğe Dön
@@ -2923,38 +3073,9 @@ function SchedulePage(props: {
                 {props.schedule.days.map((day) => (
                   <tr key={day.date}>
                     <td>{formatDateAndDay(day.date)}</td>
-                    {regularFields.map((field) => renderAssignmentCell(day, field))}
-                    {day.fullDriverId ||
-                    (day.dayDriverId &&
-                      day.dayDriverId === day.nightDriverId &&
-                      stationStaff.find((person) => person.id === day.dayDriverId)?.cadre === "Memur") ? (
-                      <td
-                        colSpan={2}
-                        className={
-                          invalidAssignment(
-                            stationStaff.find((person) => person.id === (day.fullDriverId ?? day.dayDriverId)),
-                            "driver",
-                            day.fullDriverId || stationStaff.find((person) => person.id === day.dayDriverId)?.cadre === "Memur" ? "full" : "day",
-                          )
-                            ? "invalid-cell"
-                            : ""
-                        }
-                      >
-                        <select value={day.fullDriverId ?? day.dayDriverId ?? ""} onChange={(event) => props.updateDriverBlock(day.date, event.target.value)}>
-                          <option value="">Boş</option>
-                          {assignmentOptions("driver", day.fullDriverId ?? day.dayDriverId, "full").map((person) => (
-                            <option key={person.id} value={person.id}>
-                              {person.fullName}{isExternal(person) ? " (dış görevlendirme)" : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                    ) : (
-                      <>
-                        {renderAssignmentCell(day, "dayDriverId", "day")}
-                        {renderAssignmentCell(day, "nightDriverId", "night")}
-                      </>
-                    )}
+                    {(activeTab === "all" || activeTab === "chief") && renderAssignmentCell(day, "chiefId")}
+                    {(activeTab === "all" || activeTab === "ysp") && renderAssignmentCell(day, "yspId")}
+                    {(activeTab === "all" || activeTab === "driver") && renderDriverCells(day)}
                   </tr>
                 ))}
               </tbody>
