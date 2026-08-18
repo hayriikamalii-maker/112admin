@@ -42,7 +42,7 @@ export function createInitialState(): AppState {
         username: "kullanici",
         password: "",
         fullName: "İstasyon Kullanıcısı",
-        role: "user",
+        role: "station_manager",
         active: true,
         stationIds: [stationId],
         dutyPermissions: ["chief", "ysp", "driver"],
@@ -102,6 +102,7 @@ export function migrateState(state: Partial<AppState>): AppState {
     users: state.users?.length
       ? state.users.map((user) => ({
           ...user,
+          role: (user.role as string) === "user" ? "station_manager" : user.role,
           aiProviders: user.aiProviders ?? [((user as { aiProvider?: AppState["settings"]["aiProvider"] }).aiProvider ?? "local")],
           dutyPermissions: user.dutyPermissions ?? ["chief", "ysp", "driver"],
           canImport: user.canImport ?? true,
@@ -126,7 +127,7 @@ export function migrateState(state: Partial<AppState>): AppState {
             username: "kullanici",
             password: "",
             fullName: "İstasyon Kullanıcısı",
-            role: "user",
+            role: "station_manager",
             active: true,
             stationIds: [firstStationId],
             dutyPermissions: ["chief", "ysp", "driver"],
