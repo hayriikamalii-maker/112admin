@@ -17,7 +17,7 @@ export type DutyRequestType = "want" | "avoid";
 export type DutyRole = "doctor" | "chief" | "ysp" | "driver";
 export type StaffDuty = "chief" | "ysp" | "driver";
 export type DriverShift = "day" | "night" | "full";
-export type UserRole = "admin" | "user";
+export type UserRole = "admin" | "station_manager" | "ysp_manager" | "driver_manager";
 export type AiProvider = "gemini" | "groq" | "local";
 export type ActivityActionType = "login" | "logout" | "navigation" | "click" | "change" | "save" | "create" | "update" | "delete" | "export" | "import" | "ai" | "other";
 
