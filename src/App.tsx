@@ -1592,6 +1592,7 @@ function App() {
 
   return (
     <div className="app-shell" data-ui-release="ultra-premium-2026-08-18">
+      <MedicalScrollIndicators />
       <aside className="sidebar">
         <div className="logo">
           <span>112</span>
@@ -1736,6 +1737,55 @@ function App() {
         {path === "/ayarlar" && isAdmin(currentUser) && <SettingsPage state={state} setState={setState} year={year} holidays={holidays} />}
         <div className="app-credit">Bu uygulama Paramedic HK tarafından tasarlanmıştır.</div>
       </main>
+    </div>
+  );
+}
+
+function MedicalScrollIndicators() {
+  const [progress, setProgress] = useState({ vertical: 0, horizontal: 0, canScrollVertical: false, canScrollHorizontal: false });
+
+  useEffect(() => {
+    let animationFrame = 0;
+    const update = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        const root = document.documentElement;
+        const verticalRange = Math.max(0, root.scrollHeight - root.clientHeight);
+        const horizontalRange = Math.max(0, root.scrollWidth - root.clientWidth);
+        setProgress({
+          vertical: verticalRange ? Math.min(1, Math.max(0, window.scrollY / verticalRange)) : 0,
+          horizontal: horizontalRange ? Math.min(1, Math.max(0, window.scrollX / horizontalRange)) : 0,
+          canScrollVertical: verticalRange > 2,
+          canScrollHorizontal: horizontalRange > 2,
+        });
+      });
+    };
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    const observer = new ResizeObserver(update);
+    observer.observe(document.documentElement);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+      observer.disconnect();
+    };
+  }, []);
+
+  return (
+    <div className="medical-scroll-system" aria-hidden="true" data-audit-ignore="true">
+      <div className={`medical-scroll-rail vertical ${progress.canScrollVertical ? "active" : "idle"}`}>
+        <span className="scroll-rail-ekg" />
+        <span className="scroll-heart" style={{ top: `calc(9px + (100% - 46px) * ${progress.vertical})` }}>🫀</span>
+      </div>
+      <div className={`medical-scroll-rail horizontal ${progress.canScrollHorizontal ? "active" : "idle"}`}>
+        <span className="scroll-rail-ekg" />
+        <span className="scroll-ambulance" style={{ left: `calc(9px + (100% - 58px) * ${progress.horizontal})` }}>
+          <Ambulance size={28} strokeWidth={1.8} />
+          <i />
+        </span>
+      </div>
     </div>
   );
 }
