@@ -616,18 +616,21 @@ Sadece şu JSON array formatını döndür:
     },
   };
   if (!isLocalHost) {
-    const proxyResponse = await fetch("/api-import.php", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apiKey, imageData, mimeType: file.type || "image/png" }),
-    });
-    const proxyData = (await proxyResponse.json().catch(() => null)) as { ok?: boolean; text?: string; message?: string } | null;
-    if (!proxyResponse.ok || !proxyData?.ok) {
-      throw new Error(proxyData?.message || `Import proxy başarısız: HTTP ${proxyResponse.status}`);
+    try {
+      const proxyResponse = await fetch("/api-import.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey, imageData, mimeType: file.type || "image/png" }),
+      });
+      const proxyData = (await proxyResponse.json().catch(() => null)) as { ok?: boolean; text?: string; message?: string } | null;
+      if (proxyResponse.ok && proxyData?.ok) {
+        const rows = uniqueImportRows(jsonFromAiText(proxyData.text ?? "").map(rowFromAiImport).filter((row): row is ImportedStaffRow => Boolean(row)));
+        if (rows.length) return rows;
+      }
+      onStatus("Sunucu proxy kullanılamadı; Gemini doğrudan deneniyor...");
+    } catch {
+      onStatus("Sunucu proxy kullanılamadı; Gemini doğrudan deneniyor...");
     }
-    const rows = uniqueImportRows(jsonFromAiText(proxyData.text ?? "").map(rowFromAiImport).filter((row): row is ImportedStaffRow => Boolean(row)));
-    if (rows.length) return rows;
-    throw new Error("AI proxy personel satırı döndürmedi");
   }
   const models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
   let lastError = "";
