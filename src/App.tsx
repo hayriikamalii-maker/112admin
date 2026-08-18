@@ -1037,38 +1037,26 @@ async function refineScheduleWithGemini(params: {
     `Kurallar: ${params.rules}`,
     `Taslak: ${JSON.stringify({ days: params.schedule.days })}`,
   ].join("\n");
-  const models = ["gemini-2.5-flash"];
   let raw = "";
   let lastError = "Gemini yanıt vermedi";
-  for (const model of models) {
+  for (const model of ["gemini-2.5-flash"]) {
     const controller = new AbortController();
     const abortFromCaller = () => controller.abort();
     params.signal?.addEventListener("abort", abortFromCaller, { once: true });
     const timeout = window.setTimeout(() => controller.abort(), 30_000);
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(params.apiKey)}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              responseMimeType: "application/json",
-              temperature: 0.15,
-              maxOutputTokens: 16384,
-            },
-          }),
-          signal: controller.signal,
-        },
-      );
+      const response = await fetch("/api/schedule-refine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: params.apiKey, prompt }),
+        signal: controller.signal,
+      });
+      const proxyData = (await response.json().catch(() => null)) as { ok?: boolean; text?: string; model?: string; message?: string } | null;
       if (!response.ok) {
-        const errorPayload = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
-        lastError = `${model}: ${errorPayload?.error?.message ?? `HTTP ${response.status}`}`;
+        lastError = proxyData?.message ?? `${model}: HTTP ${response.status}`;
         continue;
       }
-      const payload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-      raw = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
+      raw = proxyData?.text ?? "";
       if (raw.trim()) break;
       lastError = `${model}: boş yanıt`;
     } catch (error) {
@@ -1288,12 +1276,12 @@ function App() {
     mode: "auto" | "ai" = "auto",
     scope: "all" | StaffDuty = "all",
     options?: { signal?: AbortSignal; onProgress?: (message: string) => void },
-  ) {
-    if (!selectedStation || isAssignmentStation(selectedStation)) return;
+  ): Promise<{ status: "success" | "failed" | "stopped"; message?: string }> {
+    if (!selectedStation || isAssignmentStation(selectedStation)) return { status: "failed", message: "Geçerli bir istasyon seçilmedi." };
     const permittedDuties = userDutyPermissions(currentUser);
     if ((scope === "all" && permittedDuties.length < allDutyPermissions.length) || (scope !== "all" && !permittedDuties.includes(scope))) {
       setGenerationNotice("Bu görev listesini oluşturma yetkiniz yok.");
-      return;
+      return { status: "failed", message: "Bu görev listesini oluşturma yetkiniz yok." };
     }
     setAiNote("");
     setGenerationNotice(mode === "ai" ? "AI listeyi hazırlıyor..." : "Çizelge hazırlanıyor...");
@@ -1335,10 +1323,12 @@ function App() {
         if (options?.signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
           setGenerationNotice("AI liste hazırlama kullanıcı tarafından durduruldu; çizelgede değişiklik yapılmadı.");
           options?.onProgress?.("Durduruldu");
-          return;
+          return { status: "stopped" };
         }
-        generatedSchedule = baseSchedule;
         geminiError = error instanceof Error ? error.message : "bilinmeyen hata";
+        setGenerationNotice(`Gemini listeyi hazırlayamadı: ${geminiError}. Çizelgede değişiklik yapılmadı.`);
+        options?.onProgress?.("Gemini başarısız oldu");
+        return { status: "failed", message: geminiError };
       }
     }
     options?.onProgress?.("Son kurallar ve boş görevler doğrulanıyor");
@@ -1400,11 +1390,10 @@ function App() {
       const criticalCount = nextViolations.filter((item) => item.severity === "critical").length;
       const baseCriticalCount = baseViolations.filter((item) => item.severity === "critical").length;
       if (criticalCount > baseCriticalCount || nextViolations.length > baseViolations.length) {
-        generatedSchedule = baseSchedule;
-        nextSchedule = safeSchedule;
-        geminiUsed = false;
         geminiError = "AI önerisi kural ihlallerini artırdığı için güvenli taslak korundu";
-        nextViolations = baseViolations;
+        setGenerationNotice("Gemini sonucu kuralları iyileştirmediği için uygulanmadı. Çizelgede değişiklik yapılmadı.");
+        options?.onProgress?.("AI sonucu kurallara uygun bulunmadı");
+        return { status: "failed", message: geminiError };
       }
     }
     const requestWarnings = nextViolations.filter((violation) => violation.message.includes("nöbet istemiyor") || violation.message.includes("nöbet istiyor"));
@@ -1445,6 +1434,7 @@ function App() {
         ].filter(Boolean).join(" "),
       );
     }
+    return { status: "success" };
   }
 
   function clearActiveSchedule() {
@@ -3447,7 +3437,7 @@ function SchedulePage(props: {
     mode?: "auto" | "ai",
     scope?: "all" | StaffDuty,
     options?: { signal?: AbortSignal; onProgress?: (message: string) => void },
-  ) => Promise<void>;
+  ) => Promise<{ status: "success" | "failed" | "stopped"; message?: string }>;
   clearSchedule: () => void;
   updateAssignment: (date: string, field: keyof ScheduleDay, value: string) => void;
   updateDriverBlock: (date: string, value: string) => void;
@@ -3464,6 +3454,7 @@ function SchedulePage(props: {
   const [aiRunning, setAiRunning] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [aiPhase, setAiPhase] = useState("");
+  const [retryMessage, setRetryMessage] = useState("");
   const aiControllerRef = useRef<AbortController | null>(null);
   useEffect(() => {
     if (!aiRunning) return;
@@ -3608,8 +3599,10 @@ function SchedulePage(props: {
     aiControllerRef.current = controller;
     setAiRunning(true);
     setAiPhase("Başlatılıyor");
+    setRetryMessage("");
     try {
-      await props.generate("ai", activeTab, { signal: controller.signal, onProgress: setAiPhase });
+      const result = await props.generate("ai", activeTab, { signal: controller.signal, onProgress: setAiPhase });
+      if (result.status === "failed") setRetryMessage(result.message || "Gemini isteği tamamlanamadı.");
     } finally {
       if (aiControllerRef.current === controller) aiControllerRef.current = null;
       setAiRunning(false);
@@ -3675,6 +3668,16 @@ function SchedulePage(props: {
           </>
         )}
       </div>
+      {retryMessage && !aiRunning && (
+        <div className="ai-retry-card" role="alert">
+          <div>
+            <strong>Gemini ile yeniden denensin mi?</strong>
+            <span>{retryMessage} Yerel mod kullanılmadı ve mevcut çizelge değiştirilmedi.</span>
+          </div>
+          <button type="button" className="primary-button" onClick={() => void runAiGeneration()}>Evet, yeniden dene</button>
+          <button type="button" onClick={() => setRetryMessage("")}>Hayır</button>
+        </div>
+      )}
       {props.generationNotice && <p className={props.generationNotice.includes("imkansız") ? "form-error" : "save-notice"}>{props.generationNotice}</p>}
       {props.schedule ? (
         <>
