@@ -49,6 +49,7 @@ export interface AppUser {
   role: UserRole;
   active: boolean;
   stationIds: string[];
+  dutyPermissions?: StaffDuty[];
   aiProviders: AiProvider[];
   canImport?: boolean;
   mustChangePassword?: boolean;
