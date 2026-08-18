@@ -226,6 +226,7 @@ function classifyActivity(label: string, element: HTMLElement): import("./domain
   if (normalized.includes("sil") || normalized.includes("temizle") || normalized.includes("sıfırla")) return "delete";
   if (normalized.includes("oluştur") || normalized.includes("ekle")) return "create";
   if (normalized.includes("güncelle") || normalized.includes("düzenle") || normalized.includes("değiştir")) return "update";
+  if (normalized.includes("işaretlendi") || normalized.includes("işareti kaldırıldı") || normalized.includes("alanı güncellendi")) return "change";
   if (normalized.includes("kaydet")) return "save";
   if (normalized.includes("indir") || normalized.includes("excel") || normalized.includes("pdf") || normalized.includes("word")) return "export";
   if (normalized.includes("yükle") || normalized.includes("aktar") || normalized.includes("import")) return "import";
@@ -4060,6 +4061,33 @@ const activityTypeLabels: Record<UserActivityLog["action_type"], string> = {
   other: "Diğer",
 };
 
+function humanReadableActivity(log: UserActivityLog) {
+  const exactLabels: Record<string, string> = {
+    Yönet: "Kullanıcı yönetim penceresi açıldı.",
+    İncele: "Log kaydının ayrıntıları incelendi.",
+    Kapat: "Açık ayrıntı penceresi kapatıldı.",
+    Yenile: "Log kayıtları yenilendi.",
+    "CSV İndir": "Log kayıtları CSV dosyası olarak indirildi.",
+    "Filtreleri Temizle": "Log filtreleri temizlendi.",
+    "Sisteme giriş yaptı": "Sisteme giriş yaptı.",
+  };
+  let label = exactLabels[log.action_label] ?? log.action_label;
+  const oldPageMatch = label.match(/^Sayfa açıldı:\s*(\/[^\s]+)$/i);
+  if (oldPageMatch) label = `${routeLabels[oldPageMatch[1]] ?? oldPageMatch[1]} sayfası açıldı.`;
+  const technicalFields: Record<string, string> = {
+    fullDriverId: "24 Saat Sürücü",
+    dayDriverId: "Gündüz Sürücüsü",
+    nightDriverId: "Gece Sürücüsü",
+    chiefId: "Ekip Şefi",
+    chiefSecondId: "İkinci Ekip Şefi",
+    yspId: "YSP",
+    yspSecondId: "İkinci YSP",
+    doctorId: "Doktor",
+  };
+  for (const [technical, turkish] of Object.entries(technicalFields)) label = label.replaceAll(technical, turkish);
+  return label || "Sistemde işlem yapıldı.";
+}
+
 const scheduleFieldLabels: Partial<Record<keyof ScheduleDay, string>> = {
   doctorId: "Doktor",
   chiefId: "Ekip Şefi",
@@ -4126,7 +4154,7 @@ function ActivityLogsPage({ state }: { state: AppState }) {
   const routes = [...new Set(allLogs.map((log) => log.route).filter(Boolean))];
   const ips = [...new Set(allLogs.map((log) => log.ip_address).filter(Boolean))] as string[];
   const filteredLogs = allLogs.filter((log) => {
-    const haystack = `${log.username} ${log.action_label} ${routeLabels[log.route] ?? log.route} ${log.device_name ?? ""} ${log.device_type ?? ""} ${log.operating_system ?? ""} ${log.browser ?? ""} ${log.ip_address ?? ""} ${log.city ?? ""}`.toLocaleLowerCase("tr-TR");
+    const haystack = `${log.username} ${humanReadableActivity(log)} ${routeLabels[log.route] ?? log.route} ${log.device_name ?? ""} ${log.device_type ?? ""} ${log.operating_system ?? ""} ${log.browser ?? ""} ${log.ip_address ?? ""} ${log.city ?? ""}`.toLocaleLowerCase("tr-TR");
     return (userFilter === "all" || log.username === userFilter)
       && (typeFilter === "all" || log.action_type === typeFilter)
       && (deviceFilter === "all" || log.device_type === deviceFilter)
@@ -4143,7 +4171,7 @@ function ActivityLogsPage({ state }: { state: AppState }) {
   const exportCsv = () => {
     const headers = ["Tarih Saat", "Kullanıcı", "İşlem", "Türkçe Açıklama", "Sayfa", "Cihaz Türü", "Cihaz", "İşletim Sistemi", "Tarayıcı", "IP Adresi", "Şehir", "Ülke", "Ekran", "Oturum"];
     const rows = filteredLogs.map((log) => [
-      new Date(log.occurred_at).toLocaleString("tr-TR"), log.username, activityTypeLabels[log.action_type], log.action_label, log.route,
+      new Date(log.occurred_at).toLocaleString("tr-TR"), log.username, activityTypeLabels[log.action_type], humanReadableActivity(log), routeLabels[log.route] ?? log.route,
       log.device_type ?? "", log.device_name ?? "", log.operating_system ?? "", log.browser ?? "", log.ip_address ?? "", log.city ?? "", log.country ?? "", log.screen_size ?? "", log.session_id ?? "",
     ]);
     const csv = [headers, ...rows].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(";")).join("\n");
@@ -4200,7 +4228,7 @@ function ActivityLogsPage({ state }: { state: AppState }) {
                     <td><strong>{new Date(log.occurred_at).toLocaleDateString("tr-TR")}</strong><small>{new Date(log.occurred_at).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small></td>
                     <td><span className="user-log-avatar">{log.username.slice(0, 1).toUpperCase()}</span><strong>@{log.username}</strong></td>
                     <td><span className={`activity-type ${log.action_type}`}>{activityTypeLabels[log.action_type]}</span></td>
-                    <td><strong className="activity-human-label">{log.action_label}</strong></td><td>{routeLabels[log.route] ?? log.route}<small><code>{log.route}</code></small></td>
+                    <td><strong className="activity-human-label">{humanReadableActivity(log)}</strong></td><td>{routeLabels[log.route] ?? log.route}<small><code>{log.route}</code></small></td>
                     <td><strong>{log.device_type ?? "Bilinmiyor"}</strong><small>{log.device_name ?? "-"}</small><small>{log.operating_system ?? "-"} · {log.browser ?? "-"} · {log.screen_size ?? "-"}</small></td>
                     <td><strong>{log.ip_address ?? "IP yok"}</strong><small>{[log.city, log.country].filter(Boolean).join(" · ") || "Konum yok"}</small></td><td><button type="button" className="compact">{expandedId === log.id ? "Kapat" : "İncele"}</button></td>
                   </tr>
