@@ -630,7 +630,7 @@ Sadece şu JSON array formatını döndür:
   };
   if (!isLocalHost) {
     try {
-      const proxyResponse = await fetch("/api-import.php", {
+      const proxyResponse = await fetch("/api/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ apiKey, imageData, mimeType: file.type || "image/png" }),
@@ -640,9 +640,9 @@ Sadece şu JSON array formatını döndür:
         const rows = uniqueImportRows(jsonFromAiText(proxyData.text ?? "").map(rowFromAiImport).filter((row): row is ImportedStaffRow => Boolean(row)));
         if (rows.length) return rows;
       }
-      onStatus("Sunucu proxy kullanılamadı; Gemini doğrudan deneniyor...");
-    } catch {
-      onStatus("Sunucu proxy kullanılamadı; Gemini doğrudan deneniyor...");
+      onStatus(`Sunucu AI bağlantısı kullanılamadı${proxyData?.message ? `: ${proxyData.message}` : ""}; doğrudan bağlantı deneniyor...`);
+    } catch (error) {
+      onStatus(`Sunucu AI bağlantısı kurulamadı: ${error instanceof Error ? error.message : "bilinmeyen hata"}. Doğrudan bağlantı deneniyor...`);
     }
   }
   const models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
@@ -3541,7 +3541,7 @@ function ImportPage(props: {
             parsedRows = await extractImportRowsWithGemini(file, geminiKey, setImportNotice);
             setImportNotice(`${parsedRows.length} personel AI ile okundu. Önizlemeyi kontrol edin.`);
           } catch (error) {
-            emptyMessage = `AI görsel okuma başarısız: ${error instanceof Error ? error.message : "bilinmeyen hata"}. public_html/api-import.php ve public_html/api-config.php dosyalarını kontrol edin.`;
+            emptyMessage = `AI görsel okuma başarısız: ${error instanceof Error ? error.message : String(error || "bilinmeyen hata")}. Ayarlar > Gemini API anahtarını kontrol edin.`;
             setImportNotice(`${emptyMessage} Yerel OCR deneniyor...`);
           }
         } else {
