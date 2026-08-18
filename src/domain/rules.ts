@@ -35,6 +35,7 @@ export function roleLabel(role: DutyRole) {
 
 export function canServeRole(staff: Staff, role: DutyRole, station?: Station) {
   if (!staff.active) return false;
+  if (role !== "doctor" && staff.duties?.length) return staff.duties.includes(role);
   if (staff.title === "Doktor") return role === "chief" && station?.type === "A1";
   if (staff.title === "Sürücü" && staff.cadre === "4D İşçi") return role === "driver";
   if (staff.title === "ATT") return role === "ysp";
@@ -763,26 +764,10 @@ export function generateSchedule(params: {
       day.nightDriverId = nightDriver?.id;
     }
 
-    const a1DoctorStaff = station.type === "A1" ? eligibleStaff.filter((person) => person.title === "Doktor") : [];
-    const chiefParamedicStaff = eligibleStaff.filter((person) => person.title === "Paramedik");
-    const chiefDriverParamedicStaff = eligibleStaff.filter((person) => person.title === "Sürücü Paramedik");
-    day.chiefId =
-      chooseStaff({ role: "chief", date: day.date, station, staff: a1DoctorStaff, leaves, holidays, monthlyAssignments, dutyRequests, days, year, month })?.id ??
-      chooseStaff({ role: "chief", date: day.date, station, staff: chiefParamedicStaff, leaves, holidays, monthlyAssignments, dutyRequests, days, year, month })?.id ??
-      chooseStaff({ role: "chief", date: day.date, station, staff: chiefDriverParamedicStaff, leaves, holidays, monthlyAssignments, dutyRequests, days, year, month })?.id;
-    const primaryYspStaff = eligibleStaff.filter((person) => person.title === "ATT");
-    const underTargetDriverAttYspStaff = eligibleStaff.filter(
-      (person) => person.title === "Sürücü ATT" && countAssignments(days, person.id) < targetDuties(person, year, month, holidays, leaves),
-    );
-    const fallbackYspStaff = eligibleStaff.filter((person) => person.title === "Paramedik");
-    const fallbackDriverParamedicYspStaff = eligibleStaff.filter((person) => person.title === "Sürücü Paramedik");
-    const lastResortDriverAttYspStaff = eligibleStaff.filter((person) => person.title === "Sürücü ATT");
-    day.yspId =
-      chooseStaff({ role: "ysp", date: day.date, station, staff: primaryYspStaff, leaves, holidays, monthlyAssignments, dutyRequests, days, year, month })?.id ??
-      chooseStaff({ role: "ysp", date: day.date, station, staff: underTargetDriverAttYspStaff, leaves, holidays, monthlyAssignments, dutyRequests, days, year, month })?.id ??
-      chooseStaff({ role: "ysp", date: day.date, station, staff: fallbackYspStaff, leaves, holidays, monthlyAssignments, dutyRequests, days, year, month })?.id ??
-      chooseStaff({ role: "ysp", date: day.date, station, staff: fallbackDriverParamedicYspStaff, leaves, holidays, monthlyAssignments, dutyRequests, days, year, month })?.id ??
-      chooseStaff({ role: "ysp", date: day.date, station, staff: lastResortDriverAttYspStaff, leaves, holidays, monthlyAssignments, dutyRequests, days, year, month })?.id;
+    const chiefStaff = eligibleStaff.filter((person) => canServeRole(person, "chief", station));
+    const yspStaff = eligibleStaff.filter((person) => canServeRole(person, "ysp", station));
+    day.chiefId = chooseStaff({ role: "chief", date: day.date, station, staff: chiefStaff, leaves, holidays, monthlyAssignments, dutyRequests, days, year, month })?.id;
+    day.yspId = chooseStaff({ role: "ysp", date: day.date, station, staff: yspStaff, leaves, holidays, monthlyAssignments, dutyRequests, days, year, month })?.id;
   }
 
   repairUnderTargetWorkerDrivers({ station, staff: eligibleStaff, leaves, holidays, monthlyAssignments, dutyRequests, days, year, month });
