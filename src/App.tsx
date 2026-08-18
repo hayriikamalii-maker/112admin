@@ -578,6 +578,7 @@ Türkçe karakterleri koru. Excel'e çevirme, sadece JSON döndür.
 Kolon mantığı: AD SOYAD, UNVAN, G.GÖREV DURUMU, İZİNLER, GEÇİCİ GÖREV TARİHLERİ, YOLLUK DURUMU.
 UNVAN değerlerini en yakın şu değerlerden biri olarak yaz: Doktor, Paramedik, ATT, Sürücü, Sürücü ATT, Sürücü Paramedik.
 AABT unvanını Paramedik, SRC AABT unvanını Sürücü Paramedik olarak dönüştür. Görseldeki renk veya bölüm ayırıcılarından bağımsız olarak HER personel satırını al.
+Kırmızı renkte olan ve GEÇİCİ GÖREVDE yazan satırları kesinlikle atlama; bunlar da personeldir. Başka istasyona geçici görevlendirilen personeli sonuçta tut ve görev bilgisini assignmentStatus/temporaryAssignmentDates alanlarına yaz.
 SRC ATT varsa Sürücü ATT yaz. SRC PARAMEDİK varsa Sürücü Paramedik yaz. SÜREKLİ İŞÇİ/SÜRÜCÜ varsa Sürücü yaz.
 Kadro: SÜREKLİ İŞÇİ/4D ise 4D İşçi, diğerleri Memur.
 Yıllık izin hücresinde 10 YILLIK İZİN gibi değer varsa annualLeaveDays alanına sadece sayıyı yaz.
@@ -3477,8 +3478,8 @@ function ImportPage(props: {
           emptyMessage = "Gemini API anahtarı yok. Ayarlar > Gemini API anahtarı girin veya public_html/api-config.php içine ekleyin.";
           setImportNotice(`${emptyMessage} Yerel OCR deneniyor...`);
         }
-        if (parsedRows.length > 0 && parsedRows.length < 12) {
-          setImportNotice(`${parsedRows.length} personel AI ile okundu; atlanan satırlar için yerel OCR ile ikinci kontrol yapılıyor...`);
+        if (parsedRows.length > 0) {
+          setImportNotice(`${parsedRows.length} personel AI ile okundu; renkli ve geçici görev satırları için yerel OCR ile ikinci kontrol yapılıyor...`);
           const ocrRows = await extractImportRowsFromImage(file, setImportNotice).catch(() => []);
           parsedRows = mergeImportedStaffRows(parsedRows, ocrRows);
         }
