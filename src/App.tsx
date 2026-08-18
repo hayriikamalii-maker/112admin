@@ -315,10 +315,12 @@ function importRowKey(row: ImportedStaffRow) {
 
 function titleFromImport(rawTitle: string): StaffTitle {
   const value = normalizeImportText(rawTitle);
+  if (value.includes("SRC") && value.includes("AABT")) return "Sürücü Paramedik";
   if (value.includes("SRC") && value.includes("PARAMEDIK")) return "Sürücü Paramedik";
   if (value.includes("SRC") && value.includes("ATT")) return "Sürücü ATT";
   if (value.includes("SURUCU") || value.includes("SUREKLI ISCI")) return "Sürücü";
   if (value.includes("DOKTOR")) return "Doktor";
+  if (value.includes("AABT")) return "Paramedik";
   if (value.includes("PARAMEDIK")) return "Paramedik";
   if (value.includes("ATT")) return "ATT";
   return "ATT";
@@ -374,6 +376,8 @@ function normalizeOcrTitle(value: string) {
   return normalizeImportText(value)
     .replaceAll("İ", "I")
     .replace(/\bSRC\s+ATF\b/g, "SRC ATT")
+    .replace(/\bSRC\s+AAB[TF]\b/g, "SRC AABT")
+    .replace(/\bAAB[TF]\b/g, "AABT")
     .replace(/\bAIT\b/g, "ATT")
     .replace(/\bA T T\b/g, "ATT")
     .replace(/\bDOKT0R\b/g, "DOKTOR")
@@ -383,6 +387,7 @@ function normalizeOcrTitle(value: string) {
 
 function detectedTitleInLine(line: string) {
   const patterns: Array<{ pattern: string; title: StaffTitle; cadre?: Cadre }> = [
+    { pattern: "SRC AABT", title: "Sürücü Paramedik" },
     { pattern: "SRC PARAMEDIK", title: "Sürücü Paramedik" },
     { pattern: "SURUCU PARAMEDIK", title: "Sürücü Paramedik" },
     { pattern: "SRC ATT", title: "Sürücü ATT" },
@@ -391,6 +396,7 @@ function detectedTitleInLine(line: string) {
     { pattern: "DHY DOKTOR", title: "Doktor" },
     { pattern: "4/B ATT", title: "ATT" },
     { pattern: "DOKTOR", title: "Doktor" },
+    { pattern: "AABT", title: "Paramedik" },
     { pattern: "PARAMEDIK", title: "Paramedik" },
     { pattern: "ATT", title: "ATT" },
     { pattern: "SURUCU", title: "Sürücü" },
@@ -443,6 +449,8 @@ function rowFromOcrLine(rawLine: string): ImportedStaffRow | null {
 
 function parseCompactOcrImport(text: string): ImportedStaffRow[] {
   const titlePattern = [
+    "SRC\\s+AABT",
+    "AABT",
     "SRC\\s+PARAMED[Iİ]K",
     "S[ÜU]R[ÜU]C[ÜU]\\s+PARAMED[Iİ]K",
     "SRC\\s+ATT",
@@ -483,6 +491,19 @@ function uniqueImportRows(rows: ImportedStaffRow[]) {
     seenNames.add(normalizedName);
     return true;
   });
+}
+
+function mergeImportedStaffRows(primary: ImportedStaffRow[], fallback: ImportedStaffRow[]) {
+  const merged = [...primary];
+  const knownNames = new Set(primary.map((row) => normalizeImportText(row.fullName)));
+  for (const row of fallback) {
+    const name = normalizeImportText(row.fullName);
+    if (!knownNames.has(name)) {
+      merged.push(row);
+      knownNames.add(name);
+    }
+  }
+  return uniqueImportRows(merged);
 }
 
 function parseOcrStaffImport(text: string): ImportedStaffRow[] {
@@ -556,6 +577,7 @@ Tablodaki HER PERSONEL SATIRINI oku. Başlıkları veya boş satırları alma.
 Türkçe karakterleri koru. Excel'e çevirme, sadece JSON döndür.
 Kolon mantığı: AD SOYAD, UNVAN, G.GÖREV DURUMU, İZİNLER, GEÇİCİ GÖREV TARİHLERİ, YOLLUK DURUMU.
 UNVAN değerlerini en yakın şu değerlerden biri olarak yaz: Doktor, Paramedik, ATT, Sürücü, Sürücü ATT, Sürücü Paramedik.
+AABT unvanını Paramedik, SRC AABT unvanını Sürücü Paramedik olarak dönüştür. Görseldeki renk veya bölüm ayırıcılarından bağımsız olarak HER personel satırını al.
 SRC ATT varsa Sürücü ATT yaz. SRC PARAMEDİK varsa Sürücü Paramedik yaz. SÜREKLİ İŞÇİ/SÜRÜCÜ varsa Sürücü yaz.
 Kadro: SÜREKLİ İŞÇİ/4D ise 4D İşçi, diğerleri Memur.
 Yıllık izin hücresinde 10 YILLIK İZİN gibi değer varsa annualLeaveDays alanına sadece sayıyı yaz.
@@ -947,6 +969,12 @@ function isAdmin(user?: AppUser) {
   return user?.role === "admin";
 }
 
+const allDutyPermissions: StaffDuty[] = ["chief", "ysp", "driver"];
+
+function userDutyPermissions(user?: AppUser) {
+  return isAdmin(user) ? allDutyPermissions : (user?.dutyPermissions ?? allDutyPermissions);
+}
+
 function App() {
   const path = usePath();
   const [state, setState] = useState<AppState>(() => loadState());
@@ -1045,6 +1073,11 @@ function App() {
 
   async function generate(mode: "auto" | "ai" = "auto", scope: "all" | StaffDuty = "all") {
     if (!selectedStation || isAssignmentStation(selectedStation)) return;
+    const permittedDuties = userDutyPermissions(currentUser);
+    if ((scope === "all" && permittedDuties.length < allDutyPermissions.length) || (scope !== "all" && !permittedDuties.includes(scope))) {
+      setGenerationNotice("Bu görev listesini oluşturma yetkiniz yok.");
+      return;
+    }
     setAiNote("");
     setGenerationNotice(mode === "ai" ? "Gemini çizelgeyi hazırlıyor..." : "Çizelge hazırlanıyor...");
     const baseSchedule = generateSchedule({
@@ -1082,12 +1115,17 @@ function App() {
       ysp: ["yspId"],
       driver: ["dayDriverId", "nightDriverId", "fullDriverId"],
     };
-    const nextSchedule = scope === "all" || !activeSchedule
+    const scopedBase: Schedule = activeSchedule ?? {
+      ...baseSchedule,
+      days: baseSchedule.days.map((day): ScheduleDay => ({ date: day.date })),
+      autoSnapshot: baseSchedule.days.map((day): ScheduleDay => ({ date: day.date })),
+    };
+    const nextSchedule = scope === "all"
       ? generatedSchedule
       : {
-          ...activeSchedule,
+          ...scopedBase,
           updatedAt: new Date().toISOString(),
-          days: activeSchedule.days.map((currentDay) => {
+          days: scopedBase.days.map((currentDay) => {
             const generatedDay = generatedSchedule.days.find((day) => day.date === currentDay.date);
             if (!generatedDay) return currentDay;
             const nextDay = { ...currentDay };
@@ -1135,6 +1173,9 @@ function App() {
           "Liste izin, istek, kadro ve vardiya kurallarıyla yeniden hesaplandı.",
           most ? `En fazla nöbet: ${most.staff.fullName} (${most.total}).` : "",
           least ? `En az nöbet: ${least.staff.fullName} (${least.total}).` : "",
+          nextViolations.length
+            ? `Öneriler: ${nextViolations.slice(0, 8).map((violation) => violation.message).join(" | ")}`
+            : "Tüm zorunlu görevler için uygun personel bulundu.",
         ].filter(Boolean).join(" "),
       );
     }
@@ -1431,6 +1472,7 @@ function App() {
             produceAiNote={produceAiNote}
             aiNote={aiNote}
             generationNotice={generationNotice}
+            currentUser={currentUser}
           />
         )}
         {path === "/nobet-cizelgesi" && isAssignmentStation(selectedStation) && (
@@ -2959,8 +3001,15 @@ function SchedulePage(props: {
   produceAiNote: () => void;
   aiNote: string;
   generationNotice: string;
+  currentUser: AppUser;
 }) {
-  const [activeTab, setActiveTab] = useState<"all" | StaffDuty>("all");
+  const permittedDuties = userDutyPermissions(props.currentUser);
+  const canUseCombinedTab = permittedDuties.length === allDutyPermissions.length;
+  const [activeTab, setActiveTab] = useState<"all" | StaffDuty>(canUseCombinedTab ? "all" : (permittedDuties[0] ?? "chief"));
+  useEffect(() => {
+    if (activeTab === "all" && !canUseCombinedTab) setActiveTab(permittedDuties[0] ?? "chief");
+    if (activeTab !== "all" && !permittedDuties.includes(activeTab)) setActiveTab(canUseCombinedTab ? "all" : (permittedDuties[0] ?? "chief"));
+  }, [activeTab, canUseCombinedTab, permittedDuties]);
   const stationStaff = props.state.staff
     .filter((person) => person.stationId === props.station.id && person.active)
     .filter((person) => props.station.type !== "A2" || person.title !== "Doktor")
@@ -2975,12 +3024,13 @@ function SchedulePage(props: {
       return { ...item, target, targetHours, dutyHours, overtimeHours, status };
     })
     : [];
-  const tabItems: Array<{ id: "all" | StaffDuty; label: string }> = [
+  const allTabItems: Array<{ id: "all" | StaffDuty; label: string }> = [
     { id: "all", label: "İstasyon Nöbet Listesi" },
     { id: "chief", label: "Ekip Şefi Nöbet Listesi" },
     { id: "ysp", label: "YSP Nöbet Listesi" },
     { id: "driver", label: "Sürücü Nöbet Listesi" },
   ];
+  const tabItems = allTabItems.filter((tab) => tab.id === "all" ? canUseCombinedTab : permittedDuties.includes(tab.id));
   const headers = activeTab === "all"
     ? ["Tarih ve Gün", "Ekip Şefi", "YSP", "Gündüz Sürücü", "Gece Sürücü"]
     : activeTab === "chief"
@@ -3427,6 +3477,11 @@ function ImportPage(props: {
           emptyMessage = "Gemini API anahtarı yok. Ayarlar > Gemini API anahtarı girin veya public_html/api-config.php içine ekleyin.";
           setImportNotice(`${emptyMessage} Yerel OCR deneniyor...`);
         }
+        if (parsedRows.length > 0 && parsedRows.length < 12) {
+          setImportNotice(`${parsedRows.length} personel AI ile okundu; atlanan satırlar için yerel OCR ile ikinci kontrol yapılıyor...`);
+          const ocrRows = await extractImportRowsFromImage(file, setImportNotice).catch(() => []);
+          parsedRows = mergeImportedStaffRows(parsedRows, ocrRows);
+        }
         if (!parsedRows.length) {
           parsedRows = await extractImportRowsFromImage(file, setImportNotice);
         }
@@ -3622,6 +3677,7 @@ function SettingsPage(props: {
     role: "user",
     active: true,
     stationIds: props.state.stations[0] ? [props.state.stations[0].id] : [],
+    dutyPermissions: ["chief", "ysp", "driver"],
     aiProviders: ["local"],
     canImport: true,
     mustChangePassword: true,
@@ -3829,6 +3885,7 @@ function SettingsPage(props: {
               role: "user",
               active: true,
               stationIds: props.state.stations[0] ? [props.state.stations[0].id] : [],
+              dutyPermissions: ["chief", "ysp", "driver"],
               aiProviders: ["local"],
               canImport: true,
               mustChangePassword: true,
@@ -3865,6 +3922,17 @@ function SettingsPage(props: {
               </option>
             ))}
           </select>
+          <select
+            multiple
+            aria-label="Görev yetkileri"
+            value={newUser.role === "admin" ? allDutyPermissions : (newUser.dutyPermissions ?? allDutyPermissions)}
+            disabled={newUser.role === "admin"}
+            onChange={(event) => setNewUser({ ...newUser, dutyPermissions: selectedOptions(event.currentTarget) as StaffDuty[] })}
+          >
+            <option value="chief">Ekip Şefi</option>
+            <option value="ysp">YSP</option>
+            <option value="driver">Sürücü</option>
+          </select>
           <label className="inline-check">
             <input
               type="checkbox"
@@ -3887,6 +3955,7 @@ function SettingsPage(props: {
                 <th>Rol</th>
                 <th>AI</th>
                 <th>İstasyon Yetkisi</th>
+                <th>Görev Yetkisi</th>
                 <th>Import</th>
                 <th>Durum</th>
                 <th>Şifre</th>
@@ -3968,6 +4037,25 @@ function SettingsPage(props: {
                       ))}
                     </select>
                     <span className="helper-text">Çoklu seçim için Cmd/Ctrl tuşunu kullanın.</span>
+                  </td>
+                  <td>
+                    <select
+                      multiple
+                      value={user.role === "admin" ? allDutyPermissions : (user.dutyPermissions ?? allDutyPermissions)}
+                      disabled={user.role === "admin"}
+                      onChange={(event) =>
+                        props.setState((current) => ({
+                          ...current,
+                          users: current.users.map((item) =>
+                            item.id === user.id ? { ...item, dutyPermissions: selectedOptions(event.currentTarget) as StaffDuty[] } : item,
+                          ),
+                        }))
+                      }
+                    >
+                      <option value="chief">Ekip Şefi</option>
+                      <option value="ysp">YSP</option>
+                      <option value="driver">Sürücü</option>
+                    </select>
                   </td>
                   <td>
                     <label className="inline-check">
@@ -4163,6 +4251,28 @@ function SettingsPage(props: {
                       {station.name}
                     </option>
                   ))}
+                </select>
+              </label>
+              <label>
+                Görev yetkileri
+                <select
+                  multiple
+                  value={managedUser.role === "admin" ? allDutyPermissions : (managedUser.dutyPermissions ?? allDutyPermissions)}
+                  disabled={managedUser.role === "admin"}
+                  onChange={(event) =>
+                    props.setState((current) => ({
+                      ...current,
+                      users: current.users.map((user) =>
+                        user.id === managedUser.id
+                          ? { ...user, dutyPermissions: selectedOptions(event.currentTarget) as StaffDuty[] }
+                          : user,
+                      ),
+                    }))
+                  }
+                >
+                  <option value="chief">Ekip Şefi</option>
+                  <option value="ysp">YSP</option>
+                  <option value="driver">Sürücü</option>
                 </select>
               </label>
             </div>
