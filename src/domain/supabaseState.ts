@@ -52,6 +52,10 @@ export interface ActivityLogInput {
   browser?: string;
   userAgent?: string;
   screenSize?: string;
+  ipAddress?: string;
+  country?: string;
+  city?: string;
+  datacenter?: string;
   sessionId?: string;
 }
 
@@ -73,6 +77,10 @@ export async function logUserActivity(input: ActivityLogInput) {
     browser: input.browser,
     user_agent: input.userAgent,
     screen_size: input.screenSize,
+    ip_address: input.ipAddress,
+    country: input.country,
+    city: input.city,
+    datacenter: input.datacenter,
     session_id: input.sessionId,
   });
   if (error) throw error;
