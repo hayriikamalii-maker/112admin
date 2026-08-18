@@ -40,8 +40,19 @@ import {
   isExternallyAssigned,
   validateSchedule,
 } from "./domain/rules";
-import { clearState, loadState, parseStateBackup, saveState } from "./domain/storage";
-import { loadRemoteState, saveRemoteState, supabaseEnabled } from "./domain/supabaseState";
+import { clearLegacyState, loadLegacyState, loadState, parseStateBackup } from "./domain/storage";
+import {
+  changePassword,
+  createAuthUser,
+  getAuthenticatedUsername,
+  loadRemoteState,
+  resetAuthUserPassword,
+  saveRemoteState,
+  signIn,
+  signOut,
+  supabaseEnabled,
+  updateAuthUserRole,
+} from "./domain/supabaseState";
 import type {
   AiProvider,
   AppUser,
@@ -844,33 +855,48 @@ function isAdmin(user?: AppUser) {
 function App() {
   const path = usePath();
   const [state, setState] = useState<AppState>(() => loadState());
-  const [sessionUsername, setSessionUsername] = useState(() => localStorage.getItem("112-session-user") ?? "");
+  const [sessionUsername, setSessionUsername] = useState("");
   const [selectedStationId, setSelectedStationId] = useState(state.stations[0]?.id ?? "");
   const [year, setYear] = useState(new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth() + 1);
   const [aiNote, setAiNote] = useState("");
   const [generationNotice, setGenerationNotice] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
-  const [syncNotice, setSyncNotice] = useState(supabaseEnabled ? "Supabase bağlantısı hazırlanıyor..." : "Yerel kayıt modu");
-  const [remoteReady, setRemoteReady] = useState(!supabaseEnabled);
+  const [syncNotice, setSyncNotice] = useState(supabaseEnabled ? "Güvenli bulut bağlantısı hazırlanıyor..." : "Supabase yapılandırması eksik");
+  const [remoteReady, setRemoteReady] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    if (!supabaseEnabled) return;
-    loadRemoteState()
-      .then((remoteState) => {
+    if (!supabaseEnabled) {
+      setAuthReady(true);
+      return;
+    }
+    getAuthenticatedUsername()
+      .then(async (username) => {
+        if (cancelled || !username) return;
+        const remoteState = await loadRemoteState();
         if (cancelled) return;
         if (remoteState) {
           setState(remoteState);
-          saveState(remoteState);
-          setSyncNotice("Supabase verisi yüklendi");
+          setSyncNotice("Bulut verisi yüklendi");
         } else {
-          setSyncNotice("Supabase hazır; ilk kayıt yapılacak");
+          const legacyState = loadLegacyState();
+          const firstCloudState = legacyState ?? loadState();
+          firstCloudState.users = firstCloudState.users.map((user) =>
+            user.username === "admin" ? { ...user, password: "", mustChangePassword: true } : { ...user, password: "" },
+          );
+          await saveRemoteState(firstCloudState);
+          clearLegacyState();
+          setState(firstCloudState);
+          setSyncNotice(legacyState ? "Yerel veri güvenli buluta taşındı" : "İlk bulut kaydı oluşturuldu");
         }
+        setSessionUsername(username);
+        setRemoteReady(true);
       })
-      .catch(() => setSyncNotice("Supabase okunamadı; yerel veriyle devam ediliyor"))
+      .catch(() => setSyncNotice("Güvenli bulut verisi okunamadı"))
       .finally(() => {
-        if (!cancelled) setRemoteReady(true);
+        if (!cancelled) setAuthReady(true);
       });
     return () => {
       cancelled = true;
@@ -878,15 +904,14 @@ function App() {
   }, []);
 
   useEffect(() => {
-    saveState(state);
-    if (!remoteReady || !supabaseEnabled) return;
+    if (!remoteReady || !supabaseEnabled || !sessionUsername) return;
     const timer = window.setTimeout(() => {
       void saveRemoteState(state)
-        .then(() => setSyncNotice("Supabase kaydedildi"))
-        .catch(() => setSyncNotice("Supabase kaydı başarısız; yerel kayıt korunuyor"));
+        .then(() => setSyncNotice("Buluta kaydedildi"))
+        .catch(() => setSyncNotice("Bulut kaydı başarısız; değişiklik kaydedilmedi"));
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [remoteReady, state]);
+  }, [remoteReady, sessionUsername, state]);
 
   const currentUser = state.users.find((user) => user.username === sessionUsername && user.active);
   const accessibleRealStations = isAdmin(currentUser)
@@ -1106,15 +1131,39 @@ function App() {
     );
   }
 
+  if (!authReady) {
+    return <main className="login-page"><div className="login-panel"><h1>Güvenli bulut bağlantısı hazırlanıyor...</h1></div></main>;
+  }
+
   if (!currentUser || path === "/login") {
     return (
       <LoginPage
-        users={state.users}
-        onLogin={(user) => {
-          const firstAllowedStationId = isAdmin(user) ? state.stations[0]?.id : state.stations.find((station) => user.stationIds.includes(station.id))?.id;
+        onLogin={async (username, password) => {
+          const authenticatedUsername = await signIn(username, password);
+          const remoteState = await loadRemoteState();
+          const firstCloudState = remoteState ?? loadLegacyState() ?? loadState();
+          firstCloudState.users = firstCloudState.users.map((user) =>
+            user.username === authenticatedUsername && user.username === "admin"
+              ? { ...user, password: "", mustChangePassword: remoteState ? user.mustChangePassword : true }
+              : { ...user, password: "" },
+          );
+          if (!remoteState) {
+            await saveRemoteState(firstCloudState);
+            clearLegacyState();
+          }
+          setState(firstCloudState);
+          setRemoteReady(true);
+          setSessionUsername(authenticatedUsername);
+          const user = firstCloudState.users.find((item) => item.username === authenticatedUsername && item.active);
+          if (!user) {
+            await signOut();
+            setSessionUsername("");
+            throw new Error("Bu kullanıcı için uygulama yetkisi bulunamadı.");
+          }
+          const firstAllowedStationId = isAdmin(user)
+            ? firstCloudState.stations[0]?.id
+            : firstCloudState.stations.find((station) => user.stationIds.includes(station.id))?.id;
           setSelectedStationId(firstAllowedStationId ?? "");
-          localStorage.setItem("112-session-user", user.username);
-          setSessionUsername(user.username);
           navigate("/dashboard");
         }}
       />
@@ -1125,10 +1174,11 @@ function App() {
     return (
       <PasswordChangePage
         user={currentUser}
-        onChangePassword={(password) => {
+        onChangePassword={async (password) => {
+          await changePassword(password);
           setState((current) => ({
             ...current,
-            users: current.users.map((user) => (user.id === currentUser.id ? { ...user, password, mustChangePassword: false } : user)),
+            users: current.users.map((user) => (user.id === currentUser.id ? { ...user, password: "", mustChangePassword: false } : user)),
           }));
           navigate("/dashboard");
         }}
@@ -1165,8 +1215,9 @@ function App() {
         <button
           className="logout"
           onClick={() => {
-            localStorage.removeItem("112-session-user");
+            void signOut();
             setSessionUsername("");
+            setRemoteReady(false);
             navigate("/login");
           }}
         >
@@ -1193,10 +1244,9 @@ function App() {
           setMonth={setMonth}
           saveNotice={saveNotice}
           onSave={() => {
-            saveState(state);
             void saveRemoteState(state)
-              .then(() => setSyncNotice(supabaseEnabled ? "Supabase kaydedildi" : "Yerel kayıt yapıldı"))
-              .catch(() => setSyncNotice("Supabase kaydı başarısız; yerel kayıt korunuyor"));
+              .then(() => setSyncNotice("Buluta kaydedildi"))
+              .catch(() => setSyncNotice("Bulut kaydı başarısız; değişiklik kaydedilmedi"));
             setSaveNotice("Kaydedildi");
             window.setTimeout(() => setSaveNotice(""), 1800);
           }}
@@ -1277,10 +1327,11 @@ function App() {
   );
 }
 
-function LoginPage({ users, onLogin }: { users: AppUser[]; onLogin: (user: AppUser) => void }) {
+function LoginPage({ onLogin }: { onLogin: (username: string, password: string) => Promise<void> }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   return (
     <main className="login-page">
       <div className="login-background" aria-hidden="true">
@@ -1310,14 +1361,17 @@ function LoginPage({ users, onLogin }: { users: AppUser[]; onLogin: (user: AppUs
       </div>
       <form
         className="login-panel"
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
-          const user = users.find((item) => item.username === username && item.password === password && item.active);
-          if (!user) {
+          setLoading(true);
+          setError("");
+          try {
+            await onLogin(username, password);
+          } catch {
             setError("Kullanıcı adı veya şifre hatalı.");
-            return;
+          } finally {
+            setLoading(false);
           }
-          onLogin(user);
         }}
       >
         <div className="brand-mark">112</div>
@@ -1333,9 +1387,9 @@ function LoginPage({ users, onLogin }: { users: AppUser[]; onLogin: (user: AppUs
           <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" required />
         </label>
         {error && <p className="form-error">{error}</p>}
-        <button className="primary-button">
+        <button className="primary-button" disabled={loading}>
           <KeyRound size={16} />
-          Giriş Yap
+          {loading ? "Giriş yapılıyor..." : "Giriş Yap"}
         </button>
         <p className="login-credit">Bu uygulama Paramedic HK tarafından tasarlanmıştır.</p>
       </form>
@@ -1343,7 +1397,7 @@ function LoginPage({ users, onLogin }: { users: AppUser[]; onLogin: (user: AppUs
   );
 }
 
-function PasswordChangePage({ user, onChangePassword }: { user: AppUser; onChangePassword: (password: string) => void }) {
+function PasswordChangePage({ user, onChangePassword }: { user: AppUser; onChangePassword: (password: string) => Promise<void> }) {
   const [password, setPassword] = useState("");
   const [again, setAgain] = useState("");
   const [error, setError] = useState("");
@@ -1361,7 +1415,7 @@ function PasswordChangePage({ user, onChangePassword }: { user: AppUser; onChang
       </div>
       <form
         className="login-panel"
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
           if (password.length < 6) {
             setError("Şifre en az 6 karakter olmalı.");
@@ -1371,11 +1425,11 @@ function PasswordChangePage({ user, onChangePassword }: { user: AppUser; onChang
             setError("Şifreler aynı değil.");
             return;
           }
-          if (password === "11245911") {
-            setError("Varsayılan şifreyle devam edilemez. Yeni şifre belirleyin.");
-            return;
+          try {
+            await onChangePassword(password);
+          } catch {
+            setError("Şifre değiştirilemedi. Lütfen tekrar deneyin.");
           }
-          onChangePassword(password);
         }}
       >
         <div className="brand-mark">112</div>
@@ -3408,6 +3462,7 @@ function SettingsPage(props: {
   const [aiTestResult, setAiTestResult] = useState("");
   const [testingProvider, setTestingProvider] = useState<Exclude<AiProvider, "local"> | "">("");
   const [backupNotice, setBackupNotice] = useState("");
+  const [userNotice, setUserNotice] = useState("");
   const [managedUserId, setManagedUserId] = useState("");
   const [newUser, setNewUser] = useState<AppUser>({
     id: crypto.randomUUID(),
@@ -3444,7 +3499,7 @@ function SettingsPage(props: {
           <Save size={16} />
           Kaydet
         </button>
-        <button type="button" className="danger-button" onClick={() => window.confirm("Tüm demo verileri sıfırlansın mı?") && (clearState(), window.location.reload())}>
+        <button type="button" className="danger-button" onClick={() => window.confirm("Tüm bulut verileri sıfırlansın mı?") && props.setState(loadState())}>
           Verileri Sıfırla
         </button>
       </form>
@@ -3470,8 +3525,7 @@ function SettingsPage(props: {
                 const importedState = parseStateBackup(await file.text());
                 if (!window.confirm("Mevcut canlı verinin üzerine yedek dosyası yüklensin mi?")) return;
                 props.setState(importedState);
-                saveState(importedState);
-                setBackupNotice("Yedek yüklendi. Sayfayı yenileyince de veriler korunacak.");
+                setBackupNotice("Yedek buluta yüklenmek üzere hazırlandı.");
               } catch {
                 setBackupNotice("Yedek dosyası okunamadı. Doğru JSON dosyasını seçin.");
               }
@@ -3606,9 +3660,17 @@ function SettingsPage(props: {
         <h3>Kullanıcı ve Yetki Yönetimi</h3>
         <form
           className="form-grid"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault();
-            props.setState((current) => ({ ...current, users: [...current.users, newUser] }));
+            setUserNotice("");
+            try {
+              await createAuthUser(newUser.username, newUser.password, newUser.role);
+              props.setState((current) => ({ ...current, users: [...current.users, { ...newUser, password: "" }] }));
+              setUserNotice("Kullanıcı güvenli kimlik doğrulama sisteminde oluşturuldu.");
+            } catch {
+              setUserNotice("Kullanıcı oluşturulamadı. Kullanıcı adı benzersiz ve şifre en az 6 karakter olmalı.");
+              return;
+            }
             setNewUser({
               id: crypto.randomUUID(),
               username: "",
@@ -3665,6 +3727,7 @@ function SettingsPage(props: {
             <ShieldCheck size={16} />
             Kullanıcı Ekle
           </button>
+          {userNotice && <p className="save-notice">{userNotice}</p>}
         </form>
         <div className="table-panel">
           <table>
@@ -3695,23 +3758,20 @@ function SettingsPage(props: {
                     />
                     <input
                       value={user.username}
-                      onChange={(event) =>
-                        props.setState((current) => ({
-                          ...current,
-                          users: current.users.map((item) => (item.id === user.id ? { ...item, username: event.target.value } : item)),
-                        }))
-                      }
+                      disabled
                     />
                   </td>
                   <td>
                     <select
                       value={user.role}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const role = event.target.value as AppUser["role"];
+                        void updateAuthUserRole(user.username, role).catch(() => setUserNotice("Kullanıcı rolü kimlik sisteminde güncellenemedi."));
                         props.setState((current) => ({
                           ...current,
-                          users: current.users.map((item) => (item.id === user.id ? { ...item, role: event.target.value as AppUser["role"] } : item)),
-                        }))
-                      }
+                          users: current.users.map((item) => (item.id === user.id ? { ...item, role } : item)),
+                        }));
+                      }}
                     >
                       <option value="user">Kullanıcı</option>
                       <option value="admin">Admin</option>
@@ -3788,26 +3848,24 @@ function SettingsPage(props: {
                     </button>
                   </td>
                   <td>
-                    <input
-                      type="text"
-                      value={user.password}
-                      onChange={(event) =>
-                        props.setState((current) => ({
-                          ...current,
-                          users: current.users.map((item) => (item.id === user.id ? { ...item, password: event.target.value } : item)),
-                        }))
-                      }
-                    />
                     <button
                       type="button"
-                      onClick={() =>
-                        props.setState((current) => ({
-                          ...current,
-                          users: current.users.map((item) =>
-                            item.id === user.id ? { ...item, password: "11245911", mustChangePassword: true } : item,
-                          ),
-                        }))
-                      }
+                      onClick={async () => {
+                        const temporaryPassword = window.prompt(`${user.username} için en az 6 karakterlik geçici şifre girin:`);
+                        if (!temporaryPassword) return;
+                        try {
+                          await resetAuthUserPassword(user.username, temporaryPassword);
+                          props.setState((current) => ({
+                            ...current,
+                            users: current.users.map((item) =>
+                              item.id === user.id ? { ...item, password: "", mustChangePassword: true } : item,
+                            ),
+                          }));
+                          setUserNotice("Geçici şifre güncellendi; kullanıcı ilk girişte yeni şifre belirleyecek.");
+                        } catch {
+                          setUserNotice("Şifre sıfırlanamadı. Geçici şifre en az 6 karakter olmalı.");
+                        }
+                      }}
                     >
                       Sıfırla
                     </button>
@@ -3846,50 +3904,45 @@ function SettingsPage(props: {
                 Kullanıcı adı
                 <input
                   value={managedUser.username}
-                  onChange={(event) =>
-                    props.setState((current) => ({
-                      ...current,
-                      users: current.users.map((user) => (user.id === managedUser.id ? { ...user, username: event.target.value } : user)),
-                    }))
-                  }
+                  disabled
                 />
               </label>
               <label>
                 Parola
-                <input
-                  type="text"
-                  value={managedUser.password}
-                  onChange={(event) =>
-                    props.setState((current) => ({
-                      ...current,
-                      users: current.users.map((user) => (user.id === managedUser.id ? { ...user, password: event.target.value } : user)),
-                    }))
-                  }
-                />
                 <button
                   type="button"
-                  onClick={() =>
-                    props.setState((current) => ({
-                      ...current,
-                      users: current.users.map((user) =>
-                        user.id === managedUser.id ? { ...user, password: "11245911", mustChangePassword: true } : user,
-                      ),
-                    }))
-                  }
+                  onClick={async () => {
+                    const temporaryPassword = window.prompt(`${managedUser.username} için en az 6 karakterlik geçici şifre girin:`);
+                    if (!temporaryPassword) return;
+                    try {
+                      await resetAuthUserPassword(managedUser.username, temporaryPassword);
+                      props.setState((current) => ({
+                        ...current,
+                        users: current.users.map((user) =>
+                          user.id === managedUser.id ? { ...user, password: "", mustChangePassword: true } : user,
+                        ),
+                      }));
+                      setUserNotice("Geçici şifre güncellendi; kullanıcı ilk girişte yeni şifre belirleyecek.");
+                    } catch {
+                      setUserNotice("Şifre sıfırlanamadı. Geçici şifre en az 6 karakter olmalı.");
+                    }
+                  }}
                 >
-                  Şifreyi 11245911 Yap
+                  Geçici Şifre Belirle
                 </button>
               </label>
               <label>
                 Rol
                 <select
                   value={managedUser.role}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const role = event.target.value as UserRole;
+                    void updateAuthUserRole(managedUser.username, role).catch(() => setUserNotice("Kullanıcı rolü kimlik sisteminde güncellenemedi."));
                     props.setState((current) => ({
                       ...current,
-                      users: current.users.map((user) => (user.id === managedUser.id ? { ...user, role: event.target.value as UserRole } : user)),
-                    }))
-                  }
+                      users: current.users.map((user) => (user.id === managedUser.id ? { ...user, role } : user)),
+                    }));
+                  }}
                 >
                   <option value="user">Kullanıcı</option>
                   <option value="admin">Admin</option>
