@@ -3231,7 +3231,9 @@ function SchedulePage(props: {
   const renderRoleCell = (day: ScheduleDay, role: "chief" | "ysp") => {
     const primaryField = role === "chief" ? "chiefId" : "yspId";
     const secondField = role === "chief" ? "chiefSecondId" : "yspSecondId";
-    const split = Boolean(day[secondField]);
+    // Bölme modu ikinci personel seçilmeden önce açılabilmelidir. Saat alanı,
+    // kullanıcının "İkiye böl" eylemini kalıcı olarak temsil eder.
+    const split = Boolean(day[secondField] || day[`${role}StartTime` as keyof ScheduleDay]);
     const prefix = role === "chief" ? "chief" : "ysp";
     return (
       <td className="split-shift-cell">
