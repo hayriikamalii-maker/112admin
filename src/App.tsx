@@ -88,6 +88,7 @@ const assignmentStationId = "__assignment_station__";
 const assignmentStation: Station = {
   id: assignmentStationId,
   name: "Görevlendirme İstasyonu",
+  radioCode: "GÖREV",
   city: "Sanal",
   district: "Görevlendirme",
   type: "A2",
@@ -95,6 +96,11 @@ const assignmentStation: Station = {
 
 function isAssignmentStation(station?: Station) {
   return station?.id === assignmentStationId;
+}
+
+function stationLabel(station?: Station) {
+  if (!station) return "-";
+  return station.radioCode?.trim() ? `${station.name} - ${station.radioCode.trim()}` : station.name;
 }
 
 const navItems = [
@@ -146,7 +152,7 @@ function staffDutyLabel(duty: StaffDuty) {
 }
 
 function emptyStation(): Station {
-  return { id: crypto.randomUUID(), name: "", city: "", district: "", type: "A2" };
+  return { id: crypto.randomUUID(), name: "", radioCode: "", city: "", district: "", type: "A2" };
 }
 
 function fieldRole(field: keyof ScheduleDay): DutyRole {
@@ -311,6 +317,10 @@ function normalizeImportText(value: string) {
 
 function importRowKey(row: ImportedStaffRow) {
   return `${normalizeImportText(row.fullName)}-${row.title}-${row.cadre}`;
+}
+
+function isTemporaryAssignmentImportRow(row: ImportedStaffRow) {
+  return normalizeImportText(`${row.notes} ${row.assignmentDescription ?? ""}`).includes("GECICI GOREV");
 }
 
 function titleFromImport(rawTitle: string): StaffTitle {
@@ -484,26 +494,29 @@ function parseCompactOcrImport(text: string): ImportedStaffRow[] {
 }
 
 function uniqueImportRows(rows: ImportedStaffRow[]) {
-  const seenNames = new Set<string>();
+  const seenNames: string[] = [];
   return rows.filter((row) => {
     const normalizedName = normalizeImportText(row.fullName);
-    if (seenNames.has(normalizedName)) return false;
-    seenNames.add(normalizedName);
+    const isNearDuplicate = seenNames.some((knownName) => {
+      if (knownName === normalizedName) return true;
+      if (Math.abs(knownName.length - normalizedName.length) > 1) return false;
+      const longer = knownName.length >= normalizedName.length ? knownName : normalizedName;
+      const shorter = longer === knownName ? normalizedName : knownName;
+      if (longer.length === shorter.length + 1) {
+        for (let index = 0; index < longer.length; index += 1) {
+          if (longer.slice(0, index) + longer.slice(index + 1) === shorter) return true;
+        }
+      }
+      return false;
+    });
+    if (isNearDuplicate) return false;
+    seenNames.push(normalizedName);
     return true;
   });
 }
 
 function mergeImportedStaffRows(primary: ImportedStaffRow[], fallback: ImportedStaffRow[]) {
-  const merged = [...primary];
-  const knownNames = new Set(primary.map((row) => normalizeImportText(row.fullName)));
-  for (const row of fallback) {
-    const name = normalizeImportText(row.fullName);
-    if (!knownNames.has(name)) {
-      merged.push(row);
-      knownNames.add(name);
-    }
-  }
-  return uniqueImportRows(merged);
+  return uniqueImportRows([...primary, ...fallback]);
 }
 
 function parseOcrStaffImport(text: string): ImportedStaffRow[] {
@@ -1083,7 +1096,7 @@ function App() {
       return;
     }
     setAiNote("");
-    setGenerationNotice(mode === "ai" ? "Gemini çizelgeyi hazırlıyor..." : "Çizelge hazırlanıyor...");
+    setGenerationNotice(mode === "ai" ? "AI listeyi hazırlıyor..." : "Çizelge hazırlanıyor...");
     const baseSchedule = generateSchedule({
       station: selectedStation,
       staff: state.staff,
@@ -1194,7 +1207,7 @@ function App() {
       setGenerationNotice("Temizlenecek çizelge yok.");
       return;
     }
-    if (!window.confirm(`${selectedStation?.name ?? "Seçili istasyon"} ${year} ${monthName(month)} nöbet listesi temizlensin mi?`)) return;
+    if (!window.confirm(`${stationLabel(selectedStation)} ${year} ${monthName(month)} nöbet listesi temizlensin mi?`)) return;
     const scheduleIds = new Set(schedulesToDelete.map((schedule) => schedule.id));
     updateState((draft) => ({
       ...draft,
@@ -1650,7 +1663,7 @@ function Topbar(props: {
         <select value={props.selectedStationId} onChange={(event) => props.setSelectedStationId(event.target.value)}>
           {props.stations.map((station) => (
             <option key={station.id} value={station.id}>
-              {station.name}
+              {stationLabel(station)}
             </option>
           ))}
         </select>
@@ -1746,6 +1759,7 @@ function StationsPage({ state, setState }: { state: AppState; setState: Dispatch
       >
         <h3>{editingId ? "İstasyon Düzenle" : "İstasyon Oluştur"}</h3>
         <input placeholder="İstasyon adı" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required />
+        <input placeholder="İstasyon telsiz kodu (ör. 4060)" value={draft.radioCode ?? ""} onChange={(event) => setDraft({ ...draft, radioCode: event.target.value })} required />
         <input placeholder="İl" value={draft.city} onChange={(event) => setDraft({ ...draft, city: event.target.value })} required />
         <input placeholder="İlçe" value={draft.district} onChange={(event) => setDraft({ ...draft, district: event.target.value })} required />
         <select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as StationType })}>
@@ -1765,6 +1779,7 @@ function StationsPage({ state, setState }: { state: AppState; setState: Dispatch
           <thead>
             <tr>
               <th>Ad</th>
+              <th>Telsiz Kodu</th>
               <th>İl/İlçe</th>
               <th>Tip</th>
               <th>İşlem</th>
@@ -1774,6 +1789,7 @@ function StationsPage({ state, setState }: { state: AppState; setState: Dispatch
             {state.stations.map((station) => (
               <tr key={station.id}>
                 <td>{station.name}</td>
+                <td>{station.radioCode || "-"}</td>
                 <td>{station.city} / {station.district}</td>
                 <td>{station.type}</td>
                 <td>
@@ -1838,6 +1854,8 @@ function StaffPage(props: {
   const [assignmentStartDate, setAssignmentStartDate] = useState("");
   const [assignmentEndDate, setAssignmentEndDate] = useState("");
   const [assignmentIndefinite, setAssignmentIndefinite] = useState(true);
+  const [bulkEditing, setBulkEditing] = useState(false);
+  const [bulkDrafts, setBulkDrafts] = useState<Record<string, Staff>>({});
   const assignmentView = props.stationId === assignmentStationId;
   useEffect(() => {
     if (!assignmentView) setDraft((current) => ({ ...current, stationId: props.stationId }));
@@ -1853,6 +1871,25 @@ function StaffPage(props: {
     setAssignmentStartDate("");
     setAssignmentEndDate("");
     setAssignmentIndefinite(true);
+  };
+  const startBulkEditing = () => {
+    setBulkDrafts(Object.fromEntries(
+      props.state.staff
+        .filter((person) => person.stationId === props.stationId)
+        .map((person) => [person.id, { ...person, duties: [...(person.duties ?? [])] }]),
+    ));
+    setBulkEditing(true);
+  };
+  const saveBulkEditing = () => {
+    props.setState((current) => ({
+      ...current,
+      staff: current.staff.map((person) => bulkDrafts[person.id] ?? person),
+    }));
+    setBulkEditing(false);
+    setBulkDrafts({});
+  };
+  const updateBulkDraft = (person: Staff, changes: Partial<Staff>) => {
+    setBulkDrafts((current) => ({ ...current, [person.id]: { ...(current[person.id] ?? person), ...changes } }));
   };
   const createAssignment = () => {
     if (!assignmentStaff) return;
@@ -1922,7 +1959,7 @@ function StaffPage(props: {
               {assignedStaffRows.map(({ person, assignment }) => (
                 <tr key={assignment.id}>
                   <td>{person.fullName}</td>
-                  <td>{props.state.stations.find((station) => station.id === person.stationId)?.name ?? "-"}</td>
+                  <td>{stationLabel(props.state.stations.find((station) => station.id === person.stationId))}</td>
                   <td>{person.title}</td>
                   <td>{person.duties?.length ? person.duties.map(staffDutyLabel).join(", ") : "Ünvana göre"}</td>
                   <td>{person.cadre}</td>
@@ -2006,10 +2043,21 @@ function StaffPage(props: {
         {editingId && <button type="button" onClick={resetForm}>Vazgeç</button>}
       </form>
       <div className="panel table-panel">
+        <div className="row-actions bulk-edit-actions">
+          {!bulkEditing ? (
+            <button type="button" className="primary-button" onClick={startBulkEditing}><Pencil size={16} /> Toplu Düzenle</button>
+          ) : (
+            <>
+              <button type="button" className="primary-button" onClick={saveBulkEditing}><Save size={16} /> Toplu Güncelle</button>
+              <button type="button" onClick={() => { setBulkEditing(false); setBulkDrafts({}); }}>Vazgeç</button>
+            </>
+          )}
+        </div>
         <table>
           <thead>
             <tr>
               <th>Personel</th>
+              <th>İstasyon</th>
               <th>Ünvan</th>
               <th>Görev</th>
               <th>Kadro</th>
@@ -2035,10 +2083,27 @@ function StaffPage(props: {
                 const effectiveTarget = person.manualTarget ?? calculatedTarget;
                 return (
                 <tr key={person.id}>
-                  <td>{person.fullName}</td>
-                  <td>{person.title}</td>
-                  <td>{person.duties?.length ? person.duties.map(staffDutyLabel).join(", ") : "Ünvana göre"}</td>
-                  <td>{person.cadre}</td>
+                  <td>{bulkEditing ? <input value={(bulkDrafts[person.id] ?? person).fullName} onChange={(event) => updateBulkDraft(person, { fullName: event.target.value })} /> : person.fullName}</td>
+                  <td>{bulkEditing ? (
+                    <select value={(bulkDrafts[person.id] ?? person).stationId} onChange={(event) => updateBulkDraft(person, { stationId: event.target.value })}>
+                      {props.state.stations.map((station) => <option key={station.id} value={station.id}>{stationLabel(station)}</option>)}
+                    </select>
+                  ) : stationLabel(props.state.stations.find((station) => station.id === person.stationId))}</td>
+                  <td>{bulkEditing ? (
+                    <select value={(bulkDrafts[person.id] ?? person).title} onChange={(event) => updateBulkDraft(person, { title: event.target.value as StaffTitle })}>
+                      {titles.map((titleOption) => <option key={titleOption}>{titleOption}</option>)}
+                    </select>
+                  ) : person.title}</td>
+                  <td>{bulkEditing ? (
+                    <select multiple value={(bulkDrafts[person.id] ?? person).duties ?? []} onChange={(event) => updateBulkDraft(person, { duties: selectedOptions(event.currentTarget) as StaffDuty[] })}>
+                      {staffDuties.map((duty) => <option key={duty} value={duty}>{staffDutyLabel(duty)}</option>)}
+                    </select>
+                  ) : person.duties?.length ? person.duties.map(staffDutyLabel).join(", ") : "Ünvana göre"}</td>
+                  <td>{bulkEditing ? (
+                    <select value={(bulkDrafts[person.id] ?? person).cadre} onChange={(event) => updateBulkDraft(person, { cadre: event.target.value as Cadre })}>
+                      {cadres.map((cadre) => <option key={cadre}>{cadre}</option>)}
+                    </select>
+                  ) : person.cadre}</td>
                   <td>{leaveDaysForStaff(person, props.year, props.month, props.holidays, props.state.leaves)}</td>
                   <td>{workedDaysForStaff(person, props.year, props.month, props.holidays, props.state.leaves)}</td>
                   <td>{externalThisMonth ? "Liste dışı" : targetHoursForStaff(person, props.year, props.month, props.holidays, props.state.leaves).toFixed(2)}</td>
@@ -2072,7 +2137,7 @@ function StaffPage(props: {
                     )}
                   </td>
                   <td>{person.overtimeAllowed ? "İstiyor" : "İstemiyor"}</td>
-                  <td>{person.notes || "-"}</td>
+                  <td>{bulkEditing ? <input value={(bulkDrafts[person.id] ?? person).notes ?? ""} onChange={(event) => updateBulkDraft(person, { notes: event.target.value })} /> : person.notes || "-"}</td>
                   <td>
                     <button type="button" onClick={() => setAssignmentStaff(person)}>Görevlendir</button>
                   </td>
@@ -2080,13 +2145,15 @@ function StaffPage(props: {
                     <button
                       className={person.active ? "pill ok" : "pill muted"}
                       onClick={() =>
-                        props.setState((current) => ({
-                          ...current,
-                          staff: current.staff.map((item) => (item.id === person.id ? { ...item, active: !item.active } : item)),
-                        }))
+                        bulkEditing
+                          ? updateBulkDraft(person, { active: !(bulkDrafts[person.id] ?? person).active })
+                          : props.setState((current) => ({
+                              ...current,
+                              staff: current.staff.map((item) => (item.id === person.id ? { ...item, active: !item.active } : item)),
+                            }))
                       }
                     >
-                      {person.active ? "Aktif" : "Pasif"}
+                      {(bulkDrafts[person.id] ?? person).active ? "Aktif" : "Pasif"}
                     </button>
                   </td>
                   <td>
@@ -2390,7 +2457,7 @@ function LeaveRequestHubPage(props: {
             <select value={selectedStationId} onChange={(event) => setSelectedStationId(event.target.value)}>
               {props.stations.map((station) => (
                 <option key={station.id} value={station.id}>
-                  {station.name}
+                  {stationLabel(station)}
                 </option>
               ))}
             </select>
@@ -2611,7 +2678,7 @@ function DutyRequestsPage(props: {
             <select value={selectedStationId} onChange={(event) => setSelectedStationId(event.target.value)}>
               {props.stations.map((station) => (
                 <option key={station.id} value={station.id}>
-                  {station.name}
+                  {stationLabel(station)}
                 </option>
               ))}
             </select>
@@ -2872,7 +2939,7 @@ function LeavesPage({
           <select value={selectedStationId} onChange={(event) => setSelectedStationId(event.target.value)}>
             {stations.map((station) => (
               <option key={station.id} value={station.id}>
-                {station.name}
+                {stationLabel(station)}
               </option>
             ))}
           </select>
@@ -3110,7 +3177,7 @@ function SchedulePage(props: {
       <div className="toolbar">
         <button className="primary-button" onClick={() => void props.generate("ai", activeTab)}>
           <Sparkles size={16} />
-          {activeTab === "all" ? "Gemini ile Tüm Listeyi Yap" : `Gemini ile ${staffDutyLabel(activeTab)} Listesini Yap`}
+          {activeTab === "all" ? "AI ile Listeyi Hazırla" : `AI ile ${staffDutyLabel(activeTab)} Listesini Hazırla`}
         </button>
         <button type="button" onClick={() => void props.generate("auto", activeTab)}>Hızlı Yedek Oluştur</button>
         <button onClick={props.restoreAuto}>
@@ -3147,7 +3214,7 @@ function SchedulePage(props: {
         <>
         <div className="schedule-layout">
           <div className="panel table-panel schedule-table">
-            <h3>{props.station.name} {props.year} {monthName(props.month)} Nöbet Çizelgesi</h3>
+            <h3>{stationLabel(props.station)} {props.year} {monthName(props.month)} Nöbet Çizelgesi</h3>
             <table>
               <thead>
                 <tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr>
@@ -3237,7 +3304,7 @@ function ArchivePage(props: {
         <tbody>
           {props.state.schedules.filter((schedule) => props.stationIds.includes(schedule.stationId)).map((schedule) => (
             <tr key={schedule.id}>
-              <td>{props.state.stations.find((station) => station.id === schedule.stationId)?.name}</td>
+              <td>{stationLabel(props.state.stations.find((station) => station.id === schedule.stationId))}</td>
               <td>{schedule.year} {monthName(schedule.month)}</td>
               <td>{schedule.days.length} gün</td>
               <td>
@@ -3329,7 +3396,7 @@ function OvertimePage(props: {
             .filter((station) => props.stationIds.includes(station.id))
             .map((station) => (
               <option key={station.id} value={station.id}>
-                {station.name}
+                {stationLabel(station)}
               </option>
             ))}
         </select>
@@ -3527,10 +3594,7 @@ function ImportPage(props: {
           notes: row.notes,
         }));
       const nextStaff = [...updatedExisting, ...newStaff];
-      const assignmentRows = approvedRows.filter((row) => {
-        const normalizedNotes = normalizeImportText(`${row.notes} ${row.assignmentDescription ?? ""}`);
-        return normalizedNotes.includes("GECICI GOREV") || normalizedNotes.includes("GECICI GOREVDE") || normalizedNotes.includes("GECICI GOREVLI");
-      });
+      const assignmentRows = approvedRows.filter(isTemporaryAssignmentImportRow);
       const newAssignments = assignmentRows
         .map((row) => {
           const person = nextStaff.find((staffItem) => staffItem.stationId === importStationId && normalizeImportText(staffItem.fullName) === normalizeImportText(row.fullName));
@@ -3553,7 +3617,8 @@ function ImportPage(props: {
         .filter((assignment): assignment is NonNullable<typeof assignment> => Boolean(assignment));
       return { ...current, staff: nextStaff, staffMonthlyAssignments: [...current.staffMonthlyAssignments, ...newAssignments] };
     });
-    setImportNotice(`${approvedRows.length} onaylı personel oluşturuldu/güncellendi. Aynı personeller tekrar eklenmedi.`);
+    const assignmentCount = approvedRows.filter(isTemporaryAssignmentImportRow).length;
+    setImportNotice(`${approvedRows.length} onaylı personel oluşturuldu/güncellendi. ${assignmentCount ? `${assignmentCount} kişi Görevlendirme İstasyonu'na atandı. ` : ""}Aynı personeller tekrar eklenmedi.`);
   };
 
   return (
@@ -3574,7 +3639,7 @@ function ImportPage(props: {
           <select value={importStationId} onChange={(event) => setImportStationId(event.target.value)}>
             {importStations.map((station) => (
               <option key={station.id} value={station.id}>
-                {station.name}
+                {stationLabel(station)}
               </option>
             ))}
           </select>
@@ -3614,7 +3679,7 @@ function ImportPage(props: {
         <div className="stats-grid">
           <Stat label="Okunan Personel" value={importRows.length} />
           <Stat label="Onaylı Personel" value={selectedRows.length} />
-          <Stat label="Hedef İstasyon" value={importStations.find((station) => station.id === importStationId)?.name ?? "-"} />
+          <Stat label="Hedef İstasyon" value={stationLabel(importStations.find((station) => station.id === importStationId))} />
         </div>
         {importRows.length > 0 && (
           <div className="table-panel import-preview">
@@ -3625,6 +3690,7 @@ function ImportPage(props: {
                   <th>Ad Soyad</th>
                   <th>Ünvan</th>
                   <th>Kadro</th>
+                  <th>Aktarım Durumu</th>
                   <th>Açıklama / İzin Notu</th>
                 </tr>
               </thead>
@@ -3647,6 +3713,7 @@ function ImportPage(props: {
                       <td>{row.fullName}</td>
                       <td>{row.title}</td>
                       <td>{row.cadre}</td>
+                      <td>{isTemporaryAssignmentImportRow(row) ? <span className="pill warning">Görevlendirilecek</span> : "Asıl istasyona eklenecek"}</td>
                       <td>{row.notes || "-"}</td>
                     </tr>
                   );
@@ -3922,7 +3989,7 @@ function SettingsPage(props: {
           >
             {props.state.stations.map((station) => (
               <option key={station.id} value={station.id}>
-                {station.name}
+                {stationLabel(station)}
               </option>
             ))}
           </select>
@@ -4036,7 +4103,7 @@ function SettingsPage(props: {
                     >
                       {props.state.stations.map((station) => (
                         <option key={station.id} value={station.id}>
-                          {station.name}
+                          {stationLabel(station)}
                         </option>
                       ))}
                     </select>
@@ -4252,7 +4319,7 @@ function SettingsPage(props: {
                 >
                   {props.state.stations.map((station) => (
                     <option key={station.id} value={station.id}>
-                      {station.name}
+                      {stationLabel(station)}
                     </option>
                   ))}
                 </select>
