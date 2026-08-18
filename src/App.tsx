@@ -4107,7 +4107,9 @@ function ActivityLogsPage({ state }: { state: AppState }) {
   const [userFilter, setUserFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [deviceFilter, setDeviceFilter] = useState("all");
+  const [osFilter, setOsFilter] = useState("all");
   const [browserFilter, setBrowserFilter] = useState("all");
+  const [locationFilter, setLocationFilter] = useState("all");
   const [routeFilter, setRouteFilter] = useState("all");
   const [ipFilter, setIpFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("");
@@ -4150,7 +4152,9 @@ function ActivityLogsPage({ state }: { state: AppState }) {
   const allLogs = useMemo(() => [...logs, ...legacyLogs].sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime()), [legacyLogs, logs]);
   const users = [...new Set(allLogs.map((log) => log.username))].sort((a, b) => a.localeCompare(b, "tr"));
   const devices = [...new Set(allLogs.map((log) => log.device_type).filter(Boolean))] as string[];
+  const operatingSystems = [...new Set(allLogs.map((log) => log.operating_system).filter(Boolean))] as string[];
   const browsers = [...new Set(allLogs.map((log) => log.browser).filter(Boolean))] as string[];
+  const locations = [...new Set(allLogs.map((log) => [log.city, log.country].filter(Boolean).join(" · ")).filter(Boolean))];
   const routes = [...new Set(allLogs.map((log) => log.route).filter(Boolean))];
   const ips = [...new Set(allLogs.map((log) => log.ip_address).filter(Boolean))] as string[];
   const filteredLogs = allLogs.filter((log) => {
@@ -4158,7 +4162,9 @@ function ActivityLogsPage({ state }: { state: AppState }) {
     return (userFilter === "all" || log.username === userFilter)
       && (typeFilter === "all" || log.action_type === typeFilter)
       && (deviceFilter === "all" || log.device_type === deviceFilter)
+      && (osFilter === "all" || log.operating_system === osFilter)
       && (browserFilter === "all" || log.browser === browserFilter)
+      && (locationFilter === "all" || [log.city, log.country].filter(Boolean).join(" · ") === locationFilter)
       && (routeFilter === "all" || log.route === routeFilter)
       && (ipFilter === "all" || log.ip_address === ipFilter)
       && (!dateFilter || log.occurred_at.slice(0, 10) === dateFilter)
@@ -4209,10 +4215,12 @@ function ActivityLogsPage({ state }: { state: AppState }) {
         <label><span>İşlem türü</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="all">Tüm işlemler</option>{Object.entries(activityTypeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label><span>Sayfa / bölüm</span><select value={routeFilter} onChange={(event) => setRouteFilter(event.target.value)}><option value="all">Tüm sayfalar</option>{routes.map((route) => <option key={route} value={route}>{routeLabels[route] ?? route}</option>)}</select></label>
         <label><span>Cihaz türü</span><select value={deviceFilter} onChange={(event) => setDeviceFilter(event.target.value)}><option value="all">Tüm cihazlar</option>{devices.map((device) => <option key={device} value={device}>{device}</option>)}</select></label>
+        <label><span>İşletim sistemi</span><select value={osFilter} onChange={(event) => setOsFilter(event.target.value)}><option value="all">Tüm işletim sistemleri</option>{operatingSystems.map((os) => <option key={os} value={os}>{os}</option>)}</select></label>
         <label><span>Tarayıcı</span><select value={browserFilter} onChange={(event) => setBrowserFilter(event.target.value)}><option value="all">Tüm tarayıcılar</option>{browsers.map((browser) => <option key={browser} value={browser}>{browser}</option>)}</select></label>
         <label><span>IP adresi</span><select value={ipFilter} onChange={(event) => setIpFilter(event.target.value)}><option value="all">Tüm IP adresleri</option>{ips.map((ip) => <option key={ip} value={ip}>{ip}</option>)}</select></label>
+        <label><span>Konum</span><select value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="all">Tüm konumlar</option>{locations.map((location) => <option key={location} value={location}>{location}</option>)}</select></label>
         <label><span>Tarih</span><input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} /></label>
-        <button type="button" onClick={() => { setQuery(""); setUserFilter("all"); setTypeFilter("all"); setDeviceFilter("all"); setBrowserFilter("all"); setRouteFilter("all"); setIpFilter("all"); setDateFilter(""); }}>Filtreleri Temizle</button>
+        <button type="button" onClick={() => { setQuery(""); setUserFilter("all"); setTypeFilter("all"); setDeviceFilter("all"); setOsFilter("all"); setBrowserFilter("all"); setLocationFilter("all"); setRouteFilter("all"); setIpFilter("all"); setDateFilter(""); }}>Filtreleri Temizle</button>
       </div>
 
       {notice && <div className="warning-box">{notice}</div>}
