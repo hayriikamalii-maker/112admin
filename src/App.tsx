@@ -119,6 +119,7 @@ const navItems = [
   ["/fazla-mesai", "Fazla Mesai", Clock3],
   ["/cizelgeler", "Çizelgeler", FileText],
   ["/kullanici-loglari", "Log Kayıtları", History],
+  ["/kullanicilar", "Kullanıcılar", ShieldCheck],
   ["/ayarlar", "Ayarlar", Settings],
 ] as const;
 
@@ -164,6 +165,7 @@ const routeLabels: Record<string, string> = {
   "/cizelgeler": "Çizelgeler",
   "/ayarlar": "Ayarlar",
   "/kullanici-loglari": "Log Kayıtları",
+  "/kullanicilar": "Kullanıcılar",
 };
 
 function controlContext(element: HTMLElement) {
@@ -1107,10 +1109,32 @@ function isAdmin(user?: AppUser) {
   return user?.role === "admin";
 }
 
+function roleName(role: UserRole) {
+  return {
+    admin: "Admin",
+    station_manager: "İstasyon Sorumlusu",
+    ysp_manager: "YSP Sorumlusu",
+    driver_manager: "Sürücü Sorumlusu",
+  }[role];
+}
+
+function canViewLogs(user?: AppUser) {
+  return user?.role === "admin" || user?.role === "station_manager";
+}
+
 const allDutyPermissions: StaffDuty[] = ["chief", "ysp", "driver"];
 
-function userDutyPermissions(user?: AppUser) {
-  return isAdmin(user) ? allDutyPermissions : (user?.dutyPermissions ?? allDutyPermissions);
+function userDutyPermissions(user?: AppUser): StaffDuty[] {
+  if (!user || user.role === "admin" || user.role === "station_manager") return allDutyPermissions;
+  if (user.role === "ysp_manager") return ["ysp"];
+  if (user.role === "driver_manager") return ["driver"];
+  return [];
+}
+
+function permissionsForRole(role: UserRole): StaffDuty[] {
+  if (role === "admin" || role === "station_manager") return allDutyPermissions;
+  if (role === "ysp_manager") return ["ysp"];
+  return ["driver"];
 }
 
 function App() {
@@ -1645,8 +1669,9 @@ function App() {
         <nav>
           {navItems
             .filter(([href]) => {
-              if (!isAdmin(currentUser) && ["/istasyonlar", "/ayarlar", "/kullanici-loglari"].includes(href)) return false;
-              if (href === "/veri-import" && !isAdmin(currentUser) && currentUser.canImport === false) return false;
+              if (!isAdmin(currentUser) && ["/istasyonlar", "/ayarlar", "/kullanicilar"].includes(href)) return false;
+              if (href === "/kullanici-loglari" && !canViewLogs(currentUser)) return false;
+              if (href === "/veri-import" && (currentUser.role === "ysp_manager" || currentUser.role === "driver_manager" || currentUser.canImport === false)) return false;
               return true;
             })
             .map(([href, label, Icon]) => (
@@ -1659,7 +1684,7 @@ function App() {
         <div className="sidebar-user">
           <span>Giriş yapan kullanıcı</span>
           <strong>{currentUser.fullName || currentUser.username}</strong>
-          <small>{currentUser.role === "admin" ? "Admin" : "Kullanıcı"} · @{currentUser.username}</small>
+          <small>{roleName(currentUser.role)} · @{currentUser.username}</small>
         </div>
         <button
           className="logout"
@@ -1738,7 +1763,7 @@ function App() {
         {(path === "/izinler" || path === "/istekler") && isAssignmentStation(selectedStation) && (
           <div className="empty-state">Görevlendirme İstasyonu için izin, rapor veya nöbet isteği girilmez. Personeli kendi istasyonuna geri çekip işlem yapın.</div>
         )}
-        {path === "/veri-import" && (isAdmin(currentUser) || currentUser.canImport !== false) && (
+        {path === "/veri-import" && currentUser.role !== "ysp_manager" && currentUser.role !== "driver_manager" && (isAdmin(currentUser) || currentUser.canImport !== false) && (
           <ImportPage state={state} setState={setState} currentUser={currentUser} year={year} month={month} />
         )}
         {path === "/nobet-cizelgesi" && selectedStation && !isAssignmentStation(selectedStation) && (
@@ -1777,8 +1802,9 @@ function App() {
         {path === "/cizelgeler" && (
           <ArchivePage state={state} setState={setState} stationIds={accessibleRealStations.map((station) => station.id)} setYear={setYear} setMonth={setMonth} />
         )}
-        {path === "/kullanici-loglari" && isAdmin(currentUser) && <ActivityLogsPage state={state} />}
-        {path === "/ayarlar" && isAdmin(currentUser) && <SettingsPage state={state} setState={setState} year={year} holidays={holidays} />}
+        {path === "/kullanici-loglari" && canViewLogs(currentUser) && <ActivityLogsPage state={state} currentUser={currentUser} />}
+        {path === "/kullanicilar" && isAdmin(currentUser) && <SettingsPage mode="users" state={state} setState={setState} year={year} holidays={holidays} />}
+        {path === "/ayarlar" && isAdmin(currentUser) && <SettingsPage mode="settings" state={state} setState={setState} year={year} holidays={holidays} />}
         <div className="app-credit">Bu uygulama Paramedic HK tarafından tasarlanmıştır.</div>
       </main>
     </div>
@@ -4250,7 +4276,7 @@ const scheduleFieldLabels: Partial<Record<keyof ScheduleDay, string>> = {
   fullDriverId: "24 Saat Sürücü",
 };
 
-function ActivityLogsPage({ state }: { state: AppState }) {
+function ActivityLogsPage({ state, currentUser }: { state: AppState; currentUser: AppUser }) {
   const [logs, setLogs] = useState<UserActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
@@ -4265,12 +4291,19 @@ function ActivityLogsPage({ state }: { state: AppState }) {
   const [ipFilter, setIpFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("");
   const [expandedId, setExpandedId] = useState("");
+  const allowedUsernames = useMemo(() => {
+    if (currentUser.role === "admin") return new Set(state.users.map((user) => user.username));
+    const stationIds = new Set(currentUser.stationIds);
+    return new Set(state.users
+      .filter((user) => user.username === currentUser.username || (["ysp_manager", "driver_manager"].includes(user.role) && user.stationIds.some((id) => stationIds.has(id))))
+      .map((user) => user.username));
+  }, [currentUser, state.users]);
 
   const refresh = async () => {
     setLoading(true);
     setNotice("");
     try {
-      setLogs(await loadUserActivityLogs(3000));
+      setLogs((await loadUserActivityLogs(3000)).filter((log) => currentUser.role === "admin" || allowedUsernames.has(log.username)));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Log kayıtları yüklenemedi.");
     } finally {
@@ -4280,7 +4313,7 @@ function ActivityLogsPage({ state }: { state: AppState }) {
 
   useEffect(() => { void refresh(); }, []);
 
-  const legacyLogs = useMemo<UserActivityLog[]>(() => state.changeLogs.map((log) => {
+  const legacyLogs = useMemo<UserActivityLog[]>(() => state.changeLogs.filter((log) => currentUser.role === "admin" || allowedUsernames.has(log.changedBy)).map((log) => {
     const schedule = state.schedules.find((item) => item.id === log.scheduleId);
     const station = state.stations.find((item) => item.id === schedule?.stationId);
     const previousName = staffName(state.staff, log.previousStaffId) || "Boş";
@@ -4299,7 +4332,7 @@ function ActivityLogsPage({ state }: { state: AppState }) {
       device_type: "Geçmiş kayıt",
       device_name: "Bu eski kayıtta cihaz bilgisi tutulmamış",
     };
-  }), [state.changeLogs, state.schedules, state.staff, state.stations]);
+  }), [allowedUsernames, currentUser.role, state.changeLogs, state.schedules, state.staff, state.stations]);
   const allLogs = useMemo(() => [...logs, ...legacyLogs].sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime()), [legacyLogs, logs]);
   const users = [...new Set(allLogs.map((log) => log.username))].sort((a, b) => a.localeCompare(b, "tr"));
   const devices = [...new Set(allLogs.map((log) => log.device_type).filter(Boolean))] as string[];
@@ -4404,6 +4437,7 @@ function ActivityLogsPage({ state }: { state: AppState }) {
 }
 
 function SettingsPage(props: {
+  mode: "settings" | "users";
   state: AppState;
   setState: Dispatch<SetStateAction<AppState>>;
   year: number;
@@ -4421,7 +4455,7 @@ function SettingsPage(props: {
     username: "",
     password: "",
     fullName: "",
-    role: "user",
+    role: "station_manager",
     active: true,
     stationIds: props.state.stations[0] ? [props.state.stations[0].id] : [],
     dutyPermissions: ["chief", "ysp", "driver"],
@@ -4432,6 +4466,7 @@ function SettingsPage(props: {
   const managedUser = props.state.users.find((user) => user.id === managedUserId);
   return (
     <section className="page settings-page">
+      {props.mode === "settings" && (
       <div className="settings-grid">
       <form
         className="panel"
@@ -4608,6 +4643,8 @@ function SettingsPage(props: {
         </div>
       </div>
       </div>
+      )}
+      {props.mode === "users" && (
       <div className="panel user-management-panel">
         <h3>Kullanıcı ve Yetki Yönetimi</h3>
         <form
@@ -4616,7 +4653,7 @@ function SettingsPage(props: {
             event.preventDefault();
             setUserNotice("");
             try {
-              await createAuthUser(newUser.username, newUser.password, newUser.role);
+              await createAuthUser(newUser.username, newUser.password, newUser.role, newUser.stationIds);
               props.setState((current) => ({ ...current, users: [...current.users, { ...newUser, password: "" }] }));
               setUserNotice("Kullanıcı güvenli kimlik doğrulama sisteminde oluşturuldu.");
             } catch {
@@ -4628,7 +4665,7 @@ function SettingsPage(props: {
               username: "",
               password: "",
               fullName: "",
-              role: "user",
+              role: "station_manager",
               active: true,
               stationIds: props.state.stations[0] ? [props.state.stations[0].id] : [],
               dutyPermissions: ["chief", "ysp", "driver"],
@@ -4641,9 +4678,14 @@ function SettingsPage(props: {
           <input placeholder="Ad soyad" value={newUser.fullName} onChange={(event) => setNewUser({ ...newUser, fullName: event.target.value })} required />
           <input placeholder="Kullanıcı adı" value={newUser.username} onChange={(event) => setNewUser({ ...newUser, username: event.target.value })} required />
           <input placeholder="Şifre" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} required />
-          <select value={newUser.role} onChange={(event) => setNewUser({ ...newUser, role: event.target.value as AppUser["role"] })}>
-            <option value="user">Kullanıcı</option>
+          <select value={newUser.role} onChange={(event) => {
+            const role = event.target.value as AppUser["role"];
+            setNewUser({ ...newUser, role, dutyPermissions: permissionsForRole(role), canImport: role === "admin" || role === "station_manager" });
+          }}>
             <option value="admin">Admin</option>
+            <option value="station_manager">İstasyon Sorumlusu</option>
+            <option value="ysp_manager">YSP Sorumlusu</option>
+            <option value="driver_manager">Sürücü Sorumlusu</option>
           </select>
           <select
             multiple
@@ -4671,8 +4713,8 @@ function SettingsPage(props: {
           <select
             multiple
             aria-label="Görev yetkileri"
-            value={newUser.role === "admin" ? allDutyPermissions : (newUser.dutyPermissions ?? allDutyPermissions)}
-            disabled={newUser.role === "admin"}
+            value={permissionsForRole(newUser.role)}
+            disabled
             onChange={(event) => setNewUser({ ...newUser, dutyPermissions: selectedOptions(event.currentTarget) as StaffDuty[] })}
           >
             <option value="chief">Ekip Şefi</option>
@@ -4682,7 +4724,8 @@ function SettingsPage(props: {
           <label className="inline-check">
             <input
               type="checkbox"
-              checked={newUser.canImport !== false}
+              checked={newUser.role !== "ysp_manager" && newUser.role !== "driver_manager" && newUser.canImport !== false}
+              disabled={newUser.role === "ysp_manager" || newUser.role === "driver_manager"}
               onChange={(event) => setNewUser({ ...newUser, canImport: event.target.checked })}
             />
             Veri import yetkisi
@@ -4731,15 +4774,17 @@ function SettingsPage(props: {
                       value={user.role}
                       onChange={(event) => {
                         const role = event.target.value as AppUser["role"];
-                        void updateAuthUserRole(user.username, role).catch(() => setUserNotice("Kullanıcı rolü kimlik sisteminde güncellenemedi."));
+                        void updateAuthUserRole(user.username, role, user.stationIds).catch(() => setUserNotice("Kullanıcı rolü kimlik sisteminde güncellenemedi."));
                         props.setState((current) => ({
                           ...current,
-                          users: current.users.map((item) => (item.id === user.id ? { ...item, role } : item)),
+                          users: current.users.map((item) => (item.id === user.id ? { ...item, role, dutyPermissions: permissionsForRole(role), canImport: role === "admin" || role === "station_manager" } : item)),
                         }));
                       }}
                     >
-                      <option value="user">Kullanıcı</option>
                       <option value="admin">Admin</option>
+                      <option value="station_manager">İstasyon Sorumlusu</option>
+                      <option value="ysp_manager">YSP Sorumlusu</option>
+                      <option value="driver_manager">Sürücü Sorumlusu</option>
                     </select>
                   </td>
                   <td>
@@ -4768,12 +4813,12 @@ function SettingsPage(props: {
                       value={user.role === "admin" ? props.state.stations.map((station) => station.id) : user.stationIds}
                       disabled={user.role === "admin"}
                       onChange={(event) =>
-                        props.setState((current) => ({
+                        { const stationIds = selectedOptions(event.currentTarget); void updateAuthUserRole(user.username, user.role, stationIds).catch(() => setUserNotice("İstasyon yetkisi güncellenemedi.")); props.setState((current) => ({
                           ...current,
                           users: current.users.map((item) =>
-                            item.id === user.id ? { ...item, stationIds: selectedOptions(event.currentTarget) } : item,
+                            item.id === user.id ? { ...item, stationIds } : item,
                           ),
-                        }))
+                        })); }
                       }
                     >
                       {props.state.stations.map((station) => (
@@ -4787,8 +4832,8 @@ function SettingsPage(props: {
                   <td>
                     <select
                       multiple
-                      value={user.role === "admin" ? allDutyPermissions : (user.dutyPermissions ?? allDutyPermissions)}
-                      disabled={user.role === "admin"}
+                      value={permissionsForRole(user.role)}
+                      disabled
                       onChange={(event) =>
                         props.setState((current) => ({
                           ...current,
@@ -4807,7 +4852,8 @@ function SettingsPage(props: {
                     <label className="inline-check">
                       <input
                         type="checkbox"
-                        checked={user.canImport !== false}
+                        checked={user.role !== "ysp_manager" && user.role !== "driver_manager" && user.canImport !== false}
+                        disabled={user.role === "ysp_manager" || user.role === "driver_manager"}
                         onChange={(event) =>
                           props.setState((current) => ({
                             ...current,
@@ -4921,15 +4967,17 @@ function SettingsPage(props: {
                   value={managedUser.role}
                   onChange={(event) => {
                     const role = event.target.value as UserRole;
-                    void updateAuthUserRole(managedUser.username, role).catch(() => setUserNotice("Kullanıcı rolü kimlik sisteminde güncellenemedi."));
+                    void updateAuthUserRole(managedUser.username, role, managedUser.stationIds).catch(() => setUserNotice("Kullanıcı rolü kimlik sisteminde güncellenemedi."));
                     props.setState((current) => ({
                       ...current,
-                      users: current.users.map((user) => (user.id === managedUser.id ? { ...user, role } : user)),
+                      users: current.users.map((user) => (user.id === managedUser.id ? { ...user, role, dutyPermissions: permissionsForRole(role), canImport: role === "admin" || role === "station_manager" } : user)),
                     }));
                   }}
                 >
-                  <option value="user">Kullanıcı</option>
                   <option value="admin">Admin</option>
+                  <option value="station_manager">İstasyon Sorumlusu</option>
+                  <option value="ysp_manager">YSP Sorumlusu</option>
+                  <option value="driver_manager">Sürücü Sorumlusu</option>
                 </select>
               </label>
               <label className="inline-check">
@@ -4948,7 +4996,8 @@ function SettingsPage(props: {
               <label className="inline-check">
                 <input
                   type="checkbox"
-                  checked={managedUser.canImport !== false}
+                  checked={managedUser.role !== "ysp_manager" && managedUser.role !== "driver_manager" && managedUser.canImport !== false}
+                  disabled={managedUser.role === "ysp_manager" || managedUser.role === "driver_manager"}
                   onChange={(event) =>
                     props.setState((current) => ({
                       ...current,
@@ -4986,10 +5035,10 @@ function SettingsPage(props: {
                   value={managedUser.role === "admin" ? props.state.stations.map((station) => station.id) : managedUser.stationIds}
                   disabled={managedUser.role === "admin"}
                   onChange={(event) =>
-                    props.setState((current) => ({
+                    { const stationIds = selectedOptions(event.currentTarget); void updateAuthUserRole(managedUser.username, managedUser.role, stationIds).catch(() => setUserNotice("İstasyon yetkisi güncellenemedi.")); props.setState((current) => ({
                       ...current,
-                      users: current.users.map((user) => (user.id === managedUser.id ? { ...user, stationIds: selectedOptions(event.currentTarget) } : user)),
-                    }))
+                      users: current.users.map((user) => (user.id === managedUser.id ? { ...user, stationIds } : user)),
+                    })); }
                   }
                 >
                   {props.state.stations.map((station) => (
@@ -5003,8 +5052,8 @@ function SettingsPage(props: {
                 Görev yetkileri
                 <select
                   multiple
-                  value={managedUser.role === "admin" ? allDutyPermissions : (managedUser.dutyPermissions ?? allDutyPermissions)}
-                  disabled={managedUser.role === "admin"}
+                  value={permissionsForRole(managedUser.role)}
+                  disabled
                   onChange={(event) =>
                     props.setState((current) => ({
                       ...current,
@@ -5025,6 +5074,7 @@ function SettingsPage(props: {
           </div>
         )}
       </div>
+      )}
     </section>
   );
 }
