@@ -23,6 +23,7 @@ export type AiProvider = "gemini" | "groq" | "local";
 export interface Station {
   id: string;
   name: string;
+  radioCode?: string;
   city: string;
   district: string;
   type: StationType;
