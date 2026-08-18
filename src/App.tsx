@@ -877,25 +877,50 @@ async function refineScheduleWithGemini(params: {
     `Kurallar: ${params.rules}`,
     `Taslak: ${JSON.stringify({ days: params.schedule.days })}`,
   ].join("\n");
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 45_000);
+  const models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"];
+  let raw = "";
+  let lastError = "Gemini yanıt vermedi";
+  for (const model of models) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 90_000);
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(params.apiKey)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              responseMimeType: "application/json",
+              temperature: 0.15,
+              maxOutputTokens: 16384,
+            },
+          }),
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) {
+        const errorPayload = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+        lastError = `${model}: ${errorPayload?.error?.message ?? `HTTP ${response.status}`}`;
+        continue;
+      }
+      const payload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+      raw = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
+      if (raw.trim()) break;
+      lastError = `${model}: boş yanıt`;
+    } catch (error) {
+      lastError = error instanceof DOMException && error.name === "AbortError"
+        ? `${model}: zaman aşımı`
+        : `${model}: ${error instanceof Error ? error.message : "bağlantı hatası"}`;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+  if (!raw.trim()) throw new Error(lastError);
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(params.apiKey)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.15 },
-        }),
-        signal: controller.signal,
-      },
-    );
-    if (!response.ok) throw new Error(`Gemini ${response.status}`);
-    const payload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-    const raw = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
-    const parsed = JSON.parse(raw) as { days?: ScheduleDay[] };
+    const cleaned = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
+    const parsed = JSON.parse(cleaned) as { days?: ScheduleDay[] };
     if (!Array.isArray(parsed.days) || parsed.days.length !== params.schedule.days.length) throw new Error("Gemini eksik gün döndürdü");
     const expectedDates = new Set(params.schedule.days.map((day) => day.date));
     const fields: Array<keyof ScheduleDay> = ["chiefId", "yspId", "dayDriverId", "nightDriverId", "fullDriverId"];
@@ -913,8 +938,8 @@ async function refineScheduleWithGemini(params: {
       return clean;
     });
     return { ...params.schedule, days, autoSnapshot: structuredClone(days), updatedAt: new Date().toISOString() };
-  } finally {
-    window.clearTimeout(timeout);
+  } catch (error) {
+    throw new Error(`Gemini yanıtı işlenemedi: ${error instanceof Error ? error.message : "geçersiz JSON"}`);
   }
 }
 
@@ -1034,6 +1059,7 @@ function App() {
     });
     let generatedSchedule: Schedule = baseSchedule;
     let geminiUsed = false;
+    let geminiError = "";
     if (mode === "ai") {
       try {
         generatedSchedule = await refineScheduleWithGemini({
@@ -1046,8 +1072,9 @@ function App() {
           apiKey: state.settings.aiApiKeys.gemini ?? "",
         });
         geminiUsed = true;
-      } catch {
+      } catch (error) {
         generatedSchedule = baseSchedule;
+        geminiError = error instanceof Error ? error.message : "bilinmeyen hata";
       }
     }
     const scopeFields: Record<StaffDuty, Array<keyof ScheduleDay>> = {
@@ -1102,7 +1129,9 @@ function App() {
       const least = [...summary].sort((left, right) => left.total - right.total)[0];
       setAiNote(
         [
-          geminiUsed ? "Gemini destekli yeniden oluşturma tamamlandı." : "Gemini kullanılamadı; yerel güvenli motor listeyi yine oluşturdu.",
+          geminiUsed
+            ? "Gemini destekli yeniden oluşturma tamamlandı."
+            : `Gemini kullanılamadı: ${geminiError || "bilinmeyen hata"}. Yerel güvenli motor listeyi yine oluşturdu.`,
           "Liste izin, istek, kadro ve vardiya kurallarıyla yeniden hesaplandı.",
           most ? `En fazla nöbet: ${most.staff.fullName} (${most.total}).` : "",
           least ? `En az nöbet: ${least.staff.fullName} (${least.total}).` : "",
