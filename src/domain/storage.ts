@@ -94,6 +94,7 @@ export function migrateState(state: Partial<AppState>): AppState {
     stations,
     staff: (state.staff ?? initial.staff).map((person) => ({
       ...person,
+      duties: person.duties ?? [],
       overtimeAllowed: person.overtimeAllowed ?? false,
     })),
     users: state.users?.length
