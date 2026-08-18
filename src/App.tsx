@@ -1021,6 +1021,7 @@ async function refineScheduleWithGemini(params: {
   dutyRequests: DutyRequest[];
   rules: string;
   apiKey: string;
+  signal?: AbortSignal;
 }) {
   if (!params.apiKey.trim()) throw new Error("Gemini API anahtarı eksik");
   const allowedStaffIds = new Set(params.staff.map((person) => person.id));
@@ -1036,12 +1037,14 @@ async function refineScheduleWithGemini(params: {
     `Kurallar: ${params.rules}`,
     `Taslak: ${JSON.stringify({ days: params.schedule.days })}`,
   ].join("\n");
-  const models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"];
+  const models = ["gemini-2.5-flash"];
   let raw = "";
   let lastError = "Gemini yanıt vermedi";
   for (const model of models) {
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 90_000);
+    const abortFromCaller = () => controller.abort();
+    params.signal?.addEventListener("abort", abortFromCaller, { once: true });
+    const timeout = window.setTimeout(() => controller.abort(), 30_000);
     try {
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(params.apiKey)}`,
@@ -1074,8 +1077,10 @@ async function refineScheduleWithGemini(params: {
         : `${model}: ${error instanceof Error ? error.message : "bağlantı hatası"}`;
     } finally {
       window.clearTimeout(timeout);
+      params.signal?.removeEventListener("abort", abortFromCaller);
     }
   }
+  if (params.signal?.aborted) throw new DOMException("İşlem kullanıcı tarafından durduruldu", "AbortError");
   if (!raw.trim()) throw new Error(lastError);
   try {
     const cleaned = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
@@ -1279,7 +1284,11 @@ function App() {
     }));
   }
 
-  async function generate(mode: "auto" | "ai" = "auto", scope: "all" | StaffDuty = "all") {
+  async function generate(
+    mode: "auto" | "ai" = "auto",
+    scope: "all" | StaffDuty = "all",
+    options?: { signal?: AbortSignal; onProgress?: (message: string) => void },
+  ) {
     if (!selectedStation || isAssignmentStation(selectedStation)) return;
     const permittedDuties = userDutyPermissions(currentUser);
     if ((scope === "all" && permittedDuties.length < allDutyPermissions.length) || (scope !== "all" && !permittedDuties.includes(scope))) {
@@ -1288,6 +1297,7 @@ function App() {
     }
     setAiNote("");
     setGenerationNotice(mode === "ai" ? "AI listeyi hazırlıyor..." : "Çizelge hazırlanıyor...");
+    options?.onProgress?.("Kurallar, izinler ve görev uygunlukları analiz ediliyor");
     const baseSchedule = generateSchedule({
       station: selectedStation,
       staff: state.staff,
@@ -1303,6 +1313,8 @@ function App() {
     let geminiError = "";
     if (mode === "ai") {
       try {
+        if (options?.signal?.aborted) throw new DOMException("İşlem kullanıcı tarafından durduruldu", "AbortError");
+        options?.onProgress?.("Güvenli taslak hazır; AI dengeleme yapıyor");
         generatedSchedule = await refineScheduleWithGemini({
           schedule: baseSchedule,
           station: selectedStation,
@@ -1315,13 +1327,21 @@ function App() {
           dutyRequests: state.dutyRequests,
           rules: state.settings.scheduleRulesText ?? "",
           apiKey: state.settings.aiApiKeys.gemini ?? "",
+          signal: options?.signal,
         });
+        if (options?.signal?.aborted) throw new DOMException("İşlem kullanıcı tarafından durduruldu", "AbortError");
         geminiUsed = true;
       } catch (error) {
+        if (options?.signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+          setGenerationNotice("AI liste hazırlama kullanıcı tarafından durduruldu; çizelgede değişiklik yapılmadı.");
+          options?.onProgress?.("Durduruldu");
+          return;
+        }
         generatedSchedule = baseSchedule;
         geminiError = error instanceof Error ? error.message : "bilinmeyen hata";
       }
     }
+    options?.onProgress?.("Son kurallar ve boş görevler doğrulanıyor");
     const scopeFields: Record<StaffDuty, Array<keyof ScheduleDay>> = {
       chief: ["chiefId", "chiefSecondId", "chiefStartTime", "chiefEndTime", "chiefSecondStartTime", "chiefSecondEndTime"],
       ysp: ["yspId", "yspSecondId", "yspStartTime", "yspEndTime", "yspSecondStartTime", "yspSecondEndTime"],
@@ -1332,7 +1352,7 @@ function App() {
       days: baseSchedule.days.map((day): ScheduleDay => ({ date: day.date })),
       autoSnapshot: baseSchedule.days.map((day): ScheduleDay => ({ date: day.date })),
     };
-    const nextSchedule = scope === "all"
+    let nextSchedule = scope === "all"
       ? generatedSchedule
       : {
           ...scopedBase,
@@ -1345,7 +1365,7 @@ function App() {
             return nextDay;
           }),
         };
-    const nextViolations = validateSchedule(
+    let nextViolations = validateSchedule(
       nextSchedule,
       selectedStation,
       state.staff,
@@ -1354,6 +1374,39 @@ function App() {
       state.dutyRequests,
       holidays,
     );
+    if (mode === "ai" && geminiUsed) {
+      const safeSchedule = scope === "all"
+        ? baseSchedule
+        : {
+            ...scopedBase,
+            updatedAt: new Date().toISOString(),
+            days: scopedBase.days.map((currentDay) => {
+              const safeDay = baseSchedule.days.find((day) => day.date === currentDay.date);
+              if (!safeDay) return currentDay;
+              const nextDay = { ...currentDay };
+              for (const field of scopeFields[scope]) nextDay[field] = safeDay[field] as never;
+              return nextDay;
+            }),
+          };
+      const baseViolations = validateSchedule(
+        safeSchedule,
+        selectedStation,
+        state.staff,
+        state.leaves,
+        state.staffMonthlyAssignments,
+        state.dutyRequests,
+        holidays,
+      );
+      const criticalCount = nextViolations.filter((item) => item.severity === "critical").length;
+      const baseCriticalCount = baseViolations.filter((item) => item.severity === "critical").length;
+      if (criticalCount > baseCriticalCount || nextViolations.length > baseViolations.length) {
+        generatedSchedule = baseSchedule;
+        nextSchedule = safeSchedule;
+        geminiUsed = false;
+        geminiError = "AI önerisi kural ihlallerini artırdığı için güvenli taslak korundu";
+        nextViolations = baseViolations;
+      }
+    }
     const requestWarnings = nextViolations.filter((violation) => violation.message.includes("nöbet istemiyor") || violation.message.includes("nöbet istiyor"));
     const requestText = requestWarnings.length
       ? ` ${requestWarnings.length} personel isteği kadro/izin/dinlenme dengesi nedeniyle karşılanamadı; feragat edilen istekler kontrol panelinde gerekçeleriyle listelendi.`
@@ -1365,6 +1418,7 @@ function App() {
         : `Liste oluşturuldu.${warningText}`,
     );
     upsertSchedule(nextSchedule);
+    options?.onProgress?.("Tamamlandı");
     if (mode === "ai") {
       const summary = dutySummary(
         nextSchedule,
@@ -3389,7 +3443,11 @@ function SchedulePage(props: {
   holidays: PublicHoliday[];
   schedule?: Schedule;
   violations: ReturnType<typeof validateSchedule>;
-  generate: (mode?: "auto" | "ai", scope?: "all" | StaffDuty) => Promise<void>;
+  generate: (
+    mode?: "auto" | "ai",
+    scope?: "all" | StaffDuty,
+    options?: { signal?: AbortSignal; onProgress?: (message: string) => void },
+  ) => Promise<void>;
   clearSchedule: () => void;
   updateAssignment: (date: string, field: keyof ScheduleDay, value: string) => void;
   updateDriverBlock: (date: string, value: string) => void;
@@ -3403,6 +3461,18 @@ function SchedulePage(props: {
   const permittedDuties = userDutyPermissions(props.currentUser);
   const canUseCombinedTab = permittedDuties.length === allDutyPermissions.length;
   const [activeTab, setActiveTab] = useState<"all" | StaffDuty>(canUseCombinedTab ? "all" : (permittedDuties[0] ?? "chief"));
+  const [aiRunning, setAiRunning] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [aiPhase, setAiPhase] = useState("");
+  const aiControllerRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (!aiRunning) return;
+    const startedAt = Date.now();
+    setElapsedSeconds(0);
+    const timer = window.setInterval(() => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)), 250);
+    return () => window.clearInterval(timer);
+  }, [aiRunning]);
+  useEffect(() => () => aiControllerRef.current?.abort(), []);
   useEffect(() => {
     if (activeTab === "all" && !canUseCombinedTab) setActiveTab(permittedDuties[0] ?? "chief");
     if (activeTab !== "all" && !permittedDuties.includes(activeTab)) setActiveTab(canUseCombinedTab ? "all" : (permittedDuties[0] ?? "chief"));
@@ -3533,6 +3603,24 @@ function SchedulePage(props: {
       <>{renderAssignmentCell(day, "dayDriverId", "day")}{renderAssignmentCell(day, "nightDriverId", "night")}</>
     );
 
+  const runAiGeneration = async () => {
+    const controller = new AbortController();
+    aiControllerRef.current = controller;
+    setAiRunning(true);
+    setAiPhase("Başlatılıyor");
+    try {
+      await props.generate("ai", activeTab, { signal: controller.signal, onProgress: setAiPhase });
+    } finally {
+      if (aiControllerRef.current === controller) aiControllerRef.current = null;
+      setAiRunning(false);
+    }
+  };
+
+  const stopAiGeneration = () => {
+    setAiPhase("Durduruluyor");
+    aiControllerRef.current?.abort();
+  };
+
   return (
     <section className="page">
       <div className="schedule-tabs" role="tablist" aria-label="Nöbet listeleri">
@@ -3543,11 +3631,21 @@ function SchedulePage(props: {
         ))}
       </div>
       <div className="toolbar">
-        <button className="primary-button" onClick={() => void props.generate("ai", activeTab)}>
-          <Sparkles size={16} />
-          {activeTab === "all" ? "AI ile Listeyi Hazırla" : `AI ile ${staffDutyLabel(activeTab)} Listesini Hazırla`}
+        <button
+          className={aiRunning ? "danger-button ai-stop-button" : "primary-button"}
+          onClick={() => aiRunning ? stopAiGeneration() : void runAiGeneration()}
+        >
+          {aiRunning ? <span className="stop-square" /> : <Sparkles size={16} />}
+          {aiRunning ? "Durdur" : activeTab === "all" ? "AI ile Listeyi Hazırla" : `AI ile ${staffDutyLabel(activeTab)} Listesini Hazırla`}
         </button>
-        <button type="button" onClick={() => void props.generate("auto", activeTab)}>Hızlı Yedek Oluştur</button>
+        {aiRunning && (
+          <div className="ai-generation-timer" role="status" aria-live="polite">
+            <Clock3 size={17} />
+            <strong>{String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:{String(elapsedSeconds % 60).padStart(2, "0")}</strong>
+            <span>{aiPhase}</span>
+          </div>
+        )}
+        <button type="button" disabled={aiRunning} onClick={() => void props.generate("auto", activeTab)}>Hızlı Yedek Oluştur</button>
         <button onClick={props.restoreAuto}>
           <RotateCcw size={16} />
           Son Otomatiğe Dön
