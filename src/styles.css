@@ -1931,3 +1931,22 @@ input:disabled, select:disabled, textarea:disabled { border-color: #e2eaec; back
   .panel { padding: 18px; }
   select:not([multiple]) { min-width: 100%; }
 }
+
+/* Premium binary controls: comfortably clickable without looking oversized. */
+input[type="checkbox"],
+input[type="radio"] {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  margin: 0;
+  accent-color: var(--primary, #0f8f83);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline: 3px solid rgba(15, 143, 131, 0.2);
+  outline-offset: 3px;
+}
