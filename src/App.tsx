@@ -118,23 +118,106 @@ const navItems = [
   ["/veri-import", "Planlama", FileUp],
   ["/fazla-mesai", "Fazla Mesai", Clock3],
   ["/cizelgeler", "Çizelgeler", FileText],
-  ["/kullanici-loglari", "Kullanıcı Logları", History],
+  ["/kullanici-loglari", "Log Kayıtları", History],
   ["/ayarlar", "Ayarlar", Settings],
 ] as const;
 
-function activityDeviceInfo() {
+interface NetworkContext {
+  ipAddress?: string;
+  country?: string;
+  city?: string;
+  region?: string;
+  timezone?: string;
+  datacenter?: string;
+  platformHint?: string;
+  mobileHint?: boolean;
+}
+
+function activityDeviceInfo(network: NetworkContext = {}) {
   const ua = navigator.userAgent;
   const operatingSystem = /iPhone|iPad|iPod/i.test(ua) ? "iOS / iPadOS" : /Android/i.test(ua) ? "Android" : /Mac OS X|Macintosh/i.test(ua) ? "macOS" : /Windows/i.test(ua) ? "Windows" : /Linux/i.test(ua) ? "Linux" : "Bilinmiyor";
   const browser = /Edg\//i.test(ua) ? "Microsoft Edge" : /OPR\//i.test(ua) ? "Opera" : /Chrome\//i.test(ua) ? "Chrome" : /Safari\//i.test(ua) ? "Safari" : /Firefox\//i.test(ua) ? "Firefox" : "Bilinmiyor";
-  const deviceType = /iPad|Tablet/i.test(ua) ? "Tablet" : /Mobile|iPhone|Android/i.test(ua) ? "Telefon" : "Bilgisayar";
+  const deviceType = /iPad|Tablet/i.test(ua) ? "Tablet" : /Mobile|iPhone|Android/i.test(ua) || network.mobileHint ? "Telefon" : "Masaüstü web";
+  const deviceModel = /iPhone/i.test(ua) ? "iPhone" : /iPad/i.test(ua) ? "iPad" : /Android/i.test(ua) ? "Android cihaz" : /Macintosh|Mac OS X/i.test(ua) ? "Mac bilgisayar (MacBook/iMac ayrımı tarayıcı tarafından paylaşılmıyor)" : operatingSystem === "Windows" ? "Windows bilgisayar" : deviceType;
   return {
     deviceType,
-    deviceName: `${deviceType} · ${operatingSystem}`,
+    deviceName: deviceModel,
     operatingSystem,
     browser,
     userAgent: ua,
     screenSize: `${window.screen.width} × ${window.screen.height}`,
+    ipAddress: network.ipAddress,
+    country: network.country,
+    city: [network.city, network.region].filter(Boolean).join(" / "),
+    datacenter: network.datacenter,
   };
+}
+
+const routeLabels: Record<string, string> = {
+  "/dashboard": "Ana Sayfa",
+  "/nobet-cizelgesi": "Nöbet Listesi",
+  "/istasyonlar": "İstasyonlar",
+  "/personeller": "Personeller",
+  "/izinler": "İzin / Rapor / İstek",
+  "/veri-import": "Planlama",
+  "/fazla-mesai": "Fazla Mesai",
+  "/cizelgeler": "Çizelgeler",
+  "/ayarlar": "Ayarlar",
+  "/kullanici-loglari": "Log Kayıtları",
+};
+
+function controlContext(element: HTMLElement) {
+  const row = element.closest("tr");
+  const cells = row ? [...row.querySelectorAll("td")] : [];
+  const cell = element.closest("td");
+  const index = cell ? cells.indexOf(cell as HTMLTableCellElement) : -1;
+  const heading = index >= 0 ? row?.closest("table")?.querySelectorAll("th")[index]?.textContent?.trim() : "";
+  const subject = cells[0]?.textContent?.trim().replace(/\s+/g, " ").slice(0, 100) || "";
+  const label = element.closest("label")?.firstChild?.textContent?.trim() || element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("placeholder") || heading || element.getAttribute("name") || "alan";
+  return { row, subject, heading: heading || label, label };
+}
+
+function describeActivity(element: HTMLElement, event: Event) {
+  const route = window.location.hash.replace(/^#/, "") || window.location.pathname;
+  const page = routeLabels[route] ?? route;
+  const context = controlContext(element);
+  const buttonText = (element.textContent || "").trim().replace(/\s+/g, " ");
+  const selectedText = element instanceof HTMLSelectElement ? [...element.selectedOptions].map((option) => option.textContent?.trim()).filter(Boolean).join(", ") : "";
+  const details: Record<string, unknown> = { olay: event.type === "change" ? "değişiklik" : "tıklama", öğe: element.tagName.toLocaleLowerCase("tr-TR"), sayfa: page };
+  if (selectedText) details.seçim = selectedText;
+  if (context.subject) details.kayıt = context.subject;
+  if (context.heading) details.alan = context.heading;
+
+  if (element instanceof HTMLInputElement && ["checkbox", "radio"].includes(element.type)) {
+    details.durum = element.checked ? "işaretlendi" : "işaret kaldırıldı";
+    const subject = context.subject ? `${context.subject} için ` : "";
+    return { label: `${subject}${context.label} ${element.checked ? "işaretlendi" : "işareti kaldırıldı"}.`, details };
+  }
+  if (element instanceof HTMLSelectElement) {
+    const subject = context.subject ? `${context.subject} kaydında ` : "";
+    return { label: `${subject}${context.heading} alanı “${selectedText || "Boş"}” olarak değiştirildi.`, details };
+  }
+  if (event.type === "change" && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
+    const subject = context.subject ? `${context.subject} kaydında ` : "";
+    return { label: `${subject}${context.label} alanı güncellendi.`, details };
+  }
+
+  const normalized = buttonText.toLocaleLowerCase("tr-TR");
+  const subject = context.subject ? `${context.subject}: ` : "";
+  if (normalized.includes("personel ekle")) return { label: "Yeni personel eklendi.", details };
+  if (normalized.includes("görevlendir")) return { label: `${subject}Personel görevlendirme işlemi açıldı veya güncellendi.`, details };
+  if (normalized.includes("fazla mesai")) return { label: `${subject}Fazla mesai işlemi yapıldı.`, details };
+  if (normalized.includes("istek") && (normalized.includes("ekle") || normalized.includes("kaydet"))) return { label: `${subject}Nöbet isteği girildi.`, details };
+  if (normalized.includes("izin") && (normalized.includes("ekle") || normalized.includes("kaydet"))) return { label: `${subject}İzin / rapor kaydı girildi.`, details };
+  if (normalized.includes("otomatik oluştur")) return { label: "Nöbet listesi otomatik oluşturuldu.", details };
+  if (normalized.includes("ai ile")) return { label: "Nöbet listesi AI ile hazırlandı.", details };
+  if (normalized.includes("listeyi temizle")) return { label: "Nöbet listesi temizlendi.", details };
+  if (normalized.includes("kaydet")) return { label: `${page} sayfasındaki değişiklikler kaydedildi.`, details };
+  if (normalized.includes("sil")) return { label: `${subject}Kayıt silme işlemi yapıldı.`, details };
+  if (normalized.includes("güncelle") || normalized.includes("düzenle")) return { label: `${subject}Kayıt güncellendi.`, details };
+  if (normalized.includes("ekle") || normalized.includes("oluştur")) return { label: `${subject}Yeni kayıt oluşturuldu.`, details };
+  if (normalized.includes("indir") || normalized.includes("excel") || normalized.includes("pdf") || normalized.includes("word")) return { label: `${page} verileri dışa aktarıldı.`, details };
+  return { label: buttonText ? `${page}: “${buttonText}” işlemi yapıldı.` : `${page} sayfasında işlem yapıldı.`, details };
 }
 
 function classifyActivity(label: string, element: HTMLElement): import("./domain/types").ActivityActionType {
@@ -1049,6 +1132,7 @@ function App() {
   const [syncNotice, setSyncNotice] = useState(supabaseEnabled ? "Güvenli bulut bağlantısı hazırlanıyor..." : "Supabase yapılandırması eksik");
   const [remoteReady, setRemoteReady] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const [networkContext, setNetworkContext] = useState<NetworkContext>({});
   const sessionId = useMemo(() => crypto.randomUUID(), []);
   const loginLoggedRef = useRef(false);
 
@@ -1090,6 +1174,13 @@ function App() {
   }, []);
 
   useEffect(() => {
+    fetch("/api/client-context", { cache: "no-store" })
+      .then((response) => response.ok ? response.json() as Promise<NetworkContext> : Promise.reject(new Error("Bağlantı bilgisi alınamadı")))
+      .then(setNetworkContext)
+      .catch(() => setNetworkContext({}));
+  }, []);
+
+  useEffect(() => {
     if (!remoteReady || !supabaseEnabled || !sessionUsername) return;
     const timer = window.setTimeout(() => {
       void saveRemoteState(state)
@@ -1123,9 +1214,9 @@ function App() {
       actionLabel: "Sisteme giriş yaptı",
       route: path,
       sessionId,
-      ...activityDeviceInfo(),
+      ...activityDeviceInfo(networkContext),
     }).catch(() => undefined);
-  }, [currentUser, path, remoteReady, sessionId]);
+  }, [currentUser, networkContext, path, remoteReady, sessionId]);
 
   useEffect(() => {
     if (!currentUser || !remoteReady) return;
@@ -1135,23 +1226,16 @@ function App() {
       const element = rawTarget.closest<HTMLElement>("button, select, input, textarea, a");
       if (!element || element.closest("[data-audit-ignore='true']")) return;
       if (element instanceof HTMLInputElement && ["password", "hidden"].includes(element.type)) return;
-      const labelElement = element.id ? document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(element.id)}"]`) : null;
-      const selectedText = element instanceof HTMLSelectElement ? element.selectedOptions[0]?.textContent?.trim() : undefined;
-      const label = (element.getAttribute("aria-label") || element.getAttribute("title") || element.textContent || labelElement?.textContent || element.getAttribute("placeholder") || element.getAttribute("name") || element.tagName)
-        .trim().replace(/\s+/g, " ").slice(0, 240);
-      if (!label) return;
-      const details: Record<string, unknown> = { event: event.type, element: element.tagName.toLocaleLowerCase("tr-TR") };
-      if (selectedText) details.selection = selectedText;
-      if (element instanceof HTMLInputElement && ["checkbox", "radio"].includes(element.type)) details.checked = element.checked;
+      const description = describeActivity(element, event);
       void logUserActivity({
         username: currentUser.username,
-        actionType: classifyActivity(label, element),
-        actionLabel: label,
+        actionType: classifyActivity(description.label, element),
+        actionLabel: description.label,
         route: window.location.hash.replace(/^#/, "") || window.location.pathname,
         target: element.id || element.getAttribute("name") || element.className || undefined,
-        details,
+        details: description.details,
         sessionId,
-        ...activityDeviceInfo(),
+        ...activityDeviceInfo(networkContext),
       }).catch(() => undefined);
     };
     document.addEventListener("click", recordElement, true);
@@ -1160,19 +1244,19 @@ function App() {
       document.removeEventListener("click", recordElement, true);
       document.removeEventListener("change", recordElement, true);
     };
-  }, [currentUser, remoteReady, sessionId]);
+  }, [currentUser, networkContext, remoteReady, sessionId]);
 
   useEffect(() => {
     if (!currentUser || !remoteReady) return;
     void logUserActivity({
       username: currentUser.username,
       actionType: "navigation",
-      actionLabel: `Sayfa açıldı: ${path}`,
+      actionLabel: `${routeLabels[path] ?? path} sayfası açıldı.`,
       route: path,
       sessionId,
-      ...activityDeviceInfo(),
+      ...activityDeviceInfo(networkContext),
     }).catch(() => undefined);
-  }, [currentUser, path, remoteReady, sessionId]);
+  }, [currentUser, networkContext, path, remoteReady, sessionId]);
 
   useEffect(() => {
     if (selectedStation && selectedStation.id !== selectedStationId) setSelectedStationId(selectedStation.id);
@@ -1647,7 +1731,7 @@ function App() {
         {path === "/cizelgeler" && (
           <ArchivePage state={state} setState={setState} stationIds={accessibleRealStations.map((station) => station.id)} setYear={setYear} setMonth={setMonth} />
         )}
-        {path === "/kullanici-loglari" && isAdmin(currentUser) && <ActivityLogsPage />}
+        {path === "/kullanici-loglari" && isAdmin(currentUser) && <ActivityLogsPage state={state} />}
         {path === "/ayarlar" && isAdmin(currentUser) && <SettingsPage state={state} setState={setState} year={year} holidays={holidays} />}
         <div className="app-credit">Bu uygulama Paramedic HK tarafından tasarlanmıştır.</div>
       </main>
@@ -3976,13 +4060,28 @@ const activityTypeLabels: Record<UserActivityLog["action_type"], string> = {
   other: "Diğer",
 };
 
-function ActivityLogsPage() {
+const scheduleFieldLabels: Partial<Record<keyof ScheduleDay, string>> = {
+  doctorId: "Doktor",
+  chiefId: "Ekip Şefi",
+  chiefSecondId: "İkinci Ekip Şefi",
+  yspId: "YSP",
+  yspSecondId: "İkinci YSP",
+  dayDriverId: "Gündüz Sürücüsü",
+  nightDriverId: "Gece Sürücüsü",
+  fullDriverId: "24 Saat Sürücü",
+};
+
+function ActivityLogsPage({ state }: { state: AppState }) {
   const [logs, setLogs] = useState<UserActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
   const [query, setQuery] = useState("");
   const [userFilter, setUserFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [deviceFilter, setDeviceFilter] = useState("all");
+  const [browserFilter, setBrowserFilter] = useState("all");
+  const [routeFilter, setRouteFilter] = useState("all");
+  const [ipFilter, setIpFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("");
   const [expandedId, setExpandedId] = useState("");
 
@@ -4000,28 +4099,57 @@ function ActivityLogsPage() {
 
   useEffect(() => { void refresh(); }, []);
 
-  const users = [...new Set(logs.map((log) => log.username))].sort((a, b) => a.localeCompare(b, "tr"));
-  const filteredLogs = logs.filter((log) => {
-    const haystack = `${log.username} ${log.action_label} ${log.route} ${log.device_name ?? ""} ${log.operating_system ?? ""} ${log.browser ?? ""}`.toLocaleLowerCase("tr-TR");
+  const legacyLogs = useMemo<UserActivityLog[]>(() => state.changeLogs.map((log) => {
+    const schedule = state.schedules.find((item) => item.id === log.scheduleId);
+    const station = state.stations.find((item) => item.id === schedule?.stationId);
+    const previousName = staffName(state.staff, log.previousStaffId) || "Boş";
+    const nextName = staffName(state.staff, log.nextStaffId) || "Boş";
+    const fieldName = scheduleFieldLabels[log.field] ?? "Nöbet görevi";
+    return {
+      id: `legacy-${log.id}`,
+      user_id: "",
+      username: log.changedBy,
+      occurred_at: log.changedAt,
+      action_type: "update",
+      action_label: `${log.date} tarihinde ${fieldName}, “${previousName}” yerine “${nextName}” olarak değiştirildi.`,
+      route: "/nobet-cizelgesi",
+      target: fieldName,
+      details: { kaynak: "Eski çizelge değişiklik kaydı", istasyon: stationLabel(station), tarih: log.date, alan: fieldName, öncekiPersonel: previousName, yeniPersonel: nextName },
+      device_type: "Geçmiş kayıt",
+      device_name: "Bu eski kayıtta cihaz bilgisi tutulmamış",
+    };
+  }), [state.changeLogs, state.schedules, state.staff, state.stations]);
+  const allLogs = useMemo(() => [...logs, ...legacyLogs].sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime()), [legacyLogs, logs]);
+  const users = [...new Set(allLogs.map((log) => log.username))].sort((a, b) => a.localeCompare(b, "tr"));
+  const devices = [...new Set(allLogs.map((log) => log.device_type).filter(Boolean))] as string[];
+  const browsers = [...new Set(allLogs.map((log) => log.browser).filter(Boolean))] as string[];
+  const routes = [...new Set(allLogs.map((log) => log.route).filter(Boolean))];
+  const ips = [...new Set(allLogs.map((log) => log.ip_address).filter(Boolean))] as string[];
+  const filteredLogs = allLogs.filter((log) => {
+    const haystack = `${log.username} ${log.action_label} ${routeLabels[log.route] ?? log.route} ${log.device_name ?? ""} ${log.device_type ?? ""} ${log.operating_system ?? ""} ${log.browser ?? ""} ${log.ip_address ?? ""} ${log.city ?? ""}`.toLocaleLowerCase("tr-TR");
     return (userFilter === "all" || log.username === userFilter)
       && (typeFilter === "all" || log.action_type === typeFilter)
+      && (deviceFilter === "all" || log.device_type === deviceFilter)
+      && (browserFilter === "all" || log.browser === browserFilter)
+      && (routeFilter === "all" || log.route === routeFilter)
+      && (ipFilter === "all" || log.ip_address === ipFilter)
       && (!dateFilter || log.occurred_at.slice(0, 10) === dateFilter)
       && (!query.trim() || haystack.includes(query.trim().toLocaleLowerCase("tr-TR")));
   });
 
-  const todayCount = logs.filter((log) => new Date(log.occurred_at).toDateString() === new Date().toDateString()).length;
-  const uniqueSessions = new Set(logs.map((log) => log.session_id).filter(Boolean)).size;
+  const todayCount = allLogs.filter((log) => new Date(log.occurred_at).toDateString() === new Date().toDateString()).length;
+  const uniqueSessions = new Set(allLogs.map((log) => log.session_id).filter(Boolean)).size;
 
   const exportCsv = () => {
-    const headers = ["Tarih Saat", "Kullanıcı", "İşlem", "Açıklama", "Sayfa", "Cihaz", "İşletim Sistemi", "Tarayıcı", "Ekran", "Oturum"];
+    const headers = ["Tarih Saat", "Kullanıcı", "İşlem", "Türkçe Açıklama", "Sayfa", "Cihaz Türü", "Cihaz", "İşletim Sistemi", "Tarayıcı", "IP Adresi", "Şehir", "Ülke", "Ekran", "Oturum"];
     const rows = filteredLogs.map((log) => [
       new Date(log.occurred_at).toLocaleString("tr-TR"), log.username, activityTypeLabels[log.action_type], log.action_label, log.route,
-      log.device_name ?? "", log.operating_system ?? "", log.browser ?? "", log.screen_size ?? "", log.session_id ?? "",
+      log.device_type ?? "", log.device_name ?? "", log.operating_system ?? "", log.browser ?? "", log.ip_address ?? "", log.city ?? "", log.country ?? "", log.screen_size ?? "", log.session_id ?? "",
     ]);
     const csv = [headers, ...rows].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(";")).join("\n");
     const link = document.createElement("a");
     link.href = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
-    link.download = `kullanici-loglari-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `log-kayitlari-${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
   };
@@ -4031,8 +4159,8 @@ function ActivityLogsPage() {
       <div className="page-heading-row">
         <div>
           <span className="eyebrow">Yönetim ve güvenlik</span>
-          <h2>Kullanıcı Log Kayıtları</h2>
-          <p>Hangi kullanıcının, hangi cihazdan, saniyesi saniyesine hangi işlemi yaptığını inceleyin.</p>
+          <h2>Log Kayıtları</h2>
+          <p>Tüm sistem hareketlerini anlaşılır Türkçe açıklamalar, cihaz ve bağlantı bilgileriyle inceleyin.</p>
         </div>
         <div className="activity-log-actions">
           <button type="button" onClick={() => void refresh()} disabled={loading}><RotateCcw size={18} /> {loading ? "Yükleniyor" : "Yenile"}</button>
@@ -4041,18 +4169,22 @@ function ActivityLogsPage() {
       </div>
 
       <div className="activity-log-stats">
-        <article><span>Toplam hareket</span><strong>{logs.length.toLocaleString("tr-TR")}</strong><small>Son 3.000 kayıt</small></article>
+        <article><span>Toplam hareket</span><strong>{allLogs.length.toLocaleString("tr-TR")}</strong><small>Canlı ve geçmiş kayıtlar</small></article>
         <article><span>Bugünkü hareket</span><strong>{todayCount.toLocaleString("tr-TR")}</strong><small>Güncel kullanım</small></article>
         <article><span>Kullanıcı</span><strong>{users.length}</strong><small>Log üreten hesap</small></article>
         <article><span>Oturum</span><strong>{uniqueSessions}</strong><small>Farklı cihaz oturumu</small></article>
       </div>
 
       <div className="panel activity-log-filter-panel">
-        <label><span>Detaylı ara</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Kullanıcı, işlem, cihaz veya sayfa ara" /></label>
+        <label className="activity-filter-search"><span>Detaylı ara</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="İşlem, personel, cihaz, IP veya sayfa ara" /></label>
         <label><span>Kullanıcı</span><select value={userFilter} onChange={(event) => setUserFilter(event.target.value)}><option value="all">Tüm kullanıcılar</option>{users.map((username) => <option key={username} value={username}>{username}</option>)}</select></label>
         <label><span>İşlem türü</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="all">Tüm işlemler</option>{Object.entries(activityTypeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label><span>Sayfa / bölüm</span><select value={routeFilter} onChange={(event) => setRouteFilter(event.target.value)}><option value="all">Tüm sayfalar</option>{routes.map((route) => <option key={route} value={route}>{routeLabels[route] ?? route}</option>)}</select></label>
+        <label><span>Cihaz türü</span><select value={deviceFilter} onChange={(event) => setDeviceFilter(event.target.value)}><option value="all">Tüm cihazlar</option>{devices.map((device) => <option key={device} value={device}>{device}</option>)}</select></label>
+        <label><span>Tarayıcı</span><select value={browserFilter} onChange={(event) => setBrowserFilter(event.target.value)}><option value="all">Tüm tarayıcılar</option>{browsers.map((browser) => <option key={browser} value={browser}>{browser}</option>)}</select></label>
+        <label><span>IP adresi</span><select value={ipFilter} onChange={(event) => setIpFilter(event.target.value)}><option value="all">Tüm IP adresleri</option>{ips.map((ip) => <option key={ip} value={ip}>{ip}</option>)}</select></label>
         <label><span>Tarih</span><input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} /></label>
-        <button type="button" onClick={() => { setQuery(""); setUserFilter("all"); setTypeFilter("all"); setDateFilter(""); }}>Filtreleri Temizle</button>
+        <button type="button" onClick={() => { setQuery(""); setUserFilter("all"); setTypeFilter("all"); setDeviceFilter("all"); setBrowserFilter("all"); setRouteFilter("all"); setIpFilter("all"); setDateFilter(""); }}>Filtreleri Temizle</button>
       </div>
 
       {notice && <div className="warning-box">{notice}</div>}
@@ -4060,7 +4192,7 @@ function ActivityLogsPage() {
         <div className="activity-log-result-bar"><strong>{filteredLogs.length.toLocaleString("tr-TR")} kayıt</strong><span>Satıra tıklayarak teknik ayrıntıları açabilirsiniz.</span></div>
         <div className="table-scroll">
           <table className="activity-log-table">
-            <thead><tr><th>Tarih ve saat</th><th>Kullanıcı</th><th>İşlem</th><th>Açıklama</th><th>Sayfa</th><th>Cihaz</th><th>Tarayıcı</th><th>Detay</th></tr></thead>
+            <thead><tr><th>Tarih ve saat</th><th>Kullanıcı</th><th>İşlem</th><th>Ne yaptı?</th><th>Sayfa</th><th>Cihaz</th><th>IP / Konum</th><th>Detay</th></tr></thead>
             <tbody>
               {filteredLogs.map((log) => (
                 <Fragment key={log.id}>
@@ -4068,11 +4200,11 @@ function ActivityLogsPage() {
                     <td><strong>{new Date(log.occurred_at).toLocaleDateString("tr-TR")}</strong><small>{new Date(log.occurred_at).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small></td>
                     <td><span className="user-log-avatar">{log.username.slice(0, 1).toUpperCase()}</span><strong>@{log.username}</strong></td>
                     <td><span className={`activity-type ${log.action_type}`}>{activityTypeLabels[log.action_type]}</span></td>
-                    <td>{log.action_label}</td><td><code>{log.route}</code></td>
-                    <td><strong>{log.device_type ?? "Bilinmiyor"}</strong><small>{log.operating_system ?? "-"} · {log.screen_size ?? "-"}</small></td>
-                    <td>{log.browser ?? "-"}</td><td><button type="button" className="compact">{expandedId === log.id ? "Kapat" : "İncele"}</button></td>
+                    <td><strong className="activity-human-label">{log.action_label}</strong></td><td>{routeLabels[log.route] ?? log.route}<small><code>{log.route}</code></small></td>
+                    <td><strong>{log.device_type ?? "Bilinmiyor"}</strong><small>{log.device_name ?? "-"}</small><small>{log.operating_system ?? "-"} · {log.browser ?? "-"} · {log.screen_size ?? "-"}</small></td>
+                    <td><strong>{log.ip_address ?? "IP yok"}</strong><small>{[log.city, log.country].filter(Boolean).join(" · ") || "Konum yok"}</small></td><td><button type="button" className="compact">{expandedId === log.id ? "Kapat" : "İncele"}</button></td>
                   </tr>
-                  {expandedId === log.id && <tr className="activity-detail-row"><td colSpan={8}><div className="activity-detail-grid"><div><span>Oturum kimliği</span><code>{log.session_id ?? "-"}</code></div><div><span>Hedef öğe</span><code>{log.target ?? "-"}</code></div><div><span>Cihaz</span><strong>{log.device_name ?? "-"}</strong></div><div><span>User Agent</span><code>{log.user_agent ?? "-"}</code></div><div className="wide"><span>İşlem ayrıntısı</span><pre>{JSON.stringify(log.details ?? {}, null, 2)}</pre></div></div></td></tr>}
+                  {expandedId === log.id && <tr className="activity-detail-row"><td colSpan={8}><div className="activity-detail-grid"><div><span>Oturum kimliği</span><code>{log.session_id ?? "Eski kayıtta yok"}</code></div><div><span>Hedef öğe</span><strong>{log.target ?? "-"}</strong></div><div><span>Cihaz</span><strong>{log.device_name ?? "-"}</strong><small>{log.device_type ?? "-"} · {log.operating_system ?? "-"}</small></div><div><span>IP ve bağlantı</span><strong>{log.ip_address ?? "-"}</strong><small>{[log.city, log.country, log.datacenter].filter(Boolean).join(" · ") || "-"}</small></div><div className="wide"><span>Tarayıcı bilgisi</span><code>{log.user_agent ?? "Eski kayıtta tarayıcı bilgisi tutulmamış"}</code></div><div className="wide"><span>İşlem ayrıntısı</span><pre>{JSON.stringify(log.details ?? {}, null, 2)}</pre></div></div></td></tr>}
                 </Fragment>
               ))}
             </tbody>
@@ -4111,7 +4243,6 @@ function SettingsPage(props: {
     mustChangePassword: true,
   });
   const managedUser = props.state.users.find((user) => user.id === managedUserId);
-  const managedUserLogs = managedUser ? props.state.changeLogs.filter((log) => log.changedBy === managedUser.username).slice(0, 20) : [];
   return (
     <section className="page settings-page">
       <div className="settings-grid">
@@ -4703,30 +4834,6 @@ function SettingsPage(props: {
                   <option value="driver">Sürücü</option>
                 </select>
               </label>
-            </div>
-            <div className="table-panel">
-              <h3>Log Kayıtları</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Tarih</th>
-                    <th>Çizelge</th>
-                    <th>Alan</th>
-                    <th>Gün</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {managedUserLogs.map((log) => (
-                    <tr key={log.id}>
-                      <td>{new Date(log.changedAt).toLocaleString("tr-TR")}</td>
-                      <td>{log.scheduleId.slice(0, 8)}</td>
-                      <td>{log.field}</td>
-                      <td>{log.date}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {managedUserLogs.length === 0 && <p className="helper-text">Bu kullanıcı için manuel çizelge değişiklik logu yok.</p>}
             </div>
           </div>
         )}
