@@ -1620,7 +1620,8 @@ td { padding-block: 13px; }
 .shift-time-edit { display: inline-flex; align-items: center; gap: 3px; }
 .shift-time-edit input { width: 76px; min-height: 30px; padding: 3px 4px; border: 0; background: transparent; font-size: 11px; font-weight: 800; }
 .split-link { min-height: 30px; padding: 4px 8px; border: 0; background: transparent; color: #0f766e; font-size: 12px; font-weight: 750; }
-.schedule-table select { min-width: 180px; }
+.schedule-table table { min-width: 1160px; table-layout: auto; }
+.schedule-table select { width: 100%; min-width: 220px; }
 
 @media (max-width: 1400px) {
   .settings-page .settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
