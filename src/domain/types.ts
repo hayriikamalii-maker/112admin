@@ -19,6 +19,26 @@ export type StaffDuty = "chief" | "ysp" | "driver";
 export type DriverShift = "day" | "night" | "full";
 export type UserRole = "admin" | "user";
 export type AiProvider = "gemini" | "groq" | "local";
+export type ActivityActionType = "login" | "logout" | "navigation" | "click" | "change" | "save" | "create" | "update" | "delete" | "export" | "import" | "ai" | "other";
+
+export interface UserActivityLog {
+  id: string;
+  user_id: string;
+  username: string;
+  occurred_at: string;
+  action_type: ActivityActionType;
+  action_label: string;
+  route: string;
+  target?: string;
+  details: Record<string, unknown>;
+  device_type?: string;
+  device_name?: string;
+  operating_system?: string;
+  browser?: string;
+  user_agent?: string;
+  screen_size?: string;
+  session_id?: string;
+}
 
 export interface Station {
   id: string;
