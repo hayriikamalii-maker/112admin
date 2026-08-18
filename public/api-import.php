@@ -51,7 +51,8 @@ Tablodaki HER PERSONEL SATIRINI oku. Başlıkları veya boş satırları alma.
 Türkçe karakterleri koru. Excel'e çevirme, sadece JSON döndür.
 Kolon mantığı: AD SOYAD, UNVAN, G.GÖREV DURUMU, İZİNLER, GEÇİCİ GÖREV TARİHLERİ, YOLLUK DURUMU.
 UNVAN değerlerini en yakın şu değerlerden biri olarak yaz: Doktor, Paramedik, ATT, Sürücü, Sürücü ATT, Sürücü Paramedik.
-SRC ATT varsa Sürücü ATT yaz. SRC PARAMEDİK varsa Sürücü Paramedik yaz. SÜREKLİ İŞÇİ/SÜRÜCÜ varsa Sürücü yaz.
+SRC ATT varsa Sürücü ATT yaz. AABT varsa Paramedik, SRC AABT veya SRC PARAMEDİK varsa Sürücü Paramedik yaz. SÜREKLİ İŞÇİ/SÜRÜCÜ varsa Sürücü yaz.
+Kırmızı renkte olan ve GEÇİCİ GÖREVDE yazan satırları kesinlikle atlama; bunlar da personeldir. Başka istasyona geçici görevlendirilen personeli sonuçta tut.
 Kadro: SÜREKLİ İŞÇİ/4D ise 4D İşçi, diğerleri Memur.
 Yıllık izin hücresinde 10 YILLIK İZİN gibi değer varsa annualLeaveDays alanına sadece sayıyı yaz.
 Geçici görev ve yolluk bilgilerini ilgili alanlara yaz.
@@ -114,6 +115,7 @@ $payload = [
   'generationConfig' => [
     'temperature' => 0,
     'responseMimeType' => 'application/json',
+    'maxOutputTokens' => 16384,
   ],
 ];
 
