@@ -1984,7 +1984,7 @@ function StaffPage(props: {
   return (
     <section className="page">
       <form
-        className="panel form-grid"
+        className="panel staff-editor"
         onSubmit={(event) => {
           event.preventDefault();
           const nextDraft = props.station?.type === "A2" && draft.title === "Doktor" ? { ...draft, title: "Paramedik" as StaffTitle } : draft;
@@ -1995,52 +1995,101 @@ function StaffPage(props: {
           resetForm();
         }}
       >
-        <input placeholder="Ad soyad" value={draft.fullName} onChange={(event) => setDraft({ ...draft, fullName: event.target.value })} required />
-        <select value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value as StaffTitle })}>
-          {visibleTitles.map((titleOption) => (
-            <option key={titleOption}>{titleOption}</option>
-          ))}
-        </select>
-        <label>
-          Görevler
-          <select
-            multiple
-            value={draft.duties ?? []}
-            onChange={(event) => setDraft({ ...draft, duties: selectedOptions(event.currentTarget) as StaffDuty[] })}
-          >
-            {staffDuties.map((duty) => <option key={duty} value={duty}>{staffDutyLabel(duty)}</option>)}
-          </select>
-          <span className="helper-text">Birden fazla görev seçilebilir. Seçilmezse ünvan kuralları kullanılır.</span>
-        </label>
-        <select value={draft.cadre} onChange={(event) => setDraft({ ...draft, cadre: event.target.value as Cadre })}>
-          {cadres.map((cadre) => (
-            <option key={cadre}>{cadre}</option>
-          ))}
-        </select>
-        <input
-          placeholder="Manuel hedef nöbet"
-          type="number"
-          value={draft.manualTarget ?? ""}
-          onChange={(event) => setDraft({ ...draft, manualTarget: event.target.value ? Number(event.target.value) : undefined })}
-        />
-        <label className="inline-check">
-          <input
-            type="checkbox"
-            checked={Boolean(draft.overtimeAllowed)}
-            onChange={(event) => setDraft({ ...draft, overtimeAllowed: event.target.checked })}
-          />
-          Fazla mesai istiyor
-        </label>
-        <textarea
-          placeholder="Açıklama / import notu"
-          value={draft.notes ?? ""}
-          onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
-        />
-        <button className="primary-button">
-          {editingId ? <Save size={16} /> : <UserPlus size={16} />}
-          {editingId ? "Güncelle" : "Personel Ekle"}
-        </button>
-        {editingId && <button type="button" onClick={resetForm}>Vazgeç</button>}
+        <div className="staff-editor-header">
+          <div className="staff-editor-icon"><UserPlus size={22} /></div>
+          <div>
+            <span className="eyebrow">PERSONEL YÖNETİMİ</span>
+            <h3>{editingId ? "Personel Bilgilerini Düzenle" : "Yeni Personel Ekle"}</h3>
+            <p>{stationLabel(props.station)} kadrosuna ait temel bilgileri ve görev yetkilerini belirleyin.</p>
+          </div>
+        </div>
+
+        <div className="staff-editor-grid">
+          <label className="staff-field staff-field-wide">
+            <span>Ad Soyad <b>*</b></span>
+            <input placeholder="Personelin adını ve soyadını yazın" value={draft.fullName} onChange={(event) => setDraft({ ...draft, fullName: event.target.value })} required />
+          </label>
+          <label className="staff-field">
+            <span>Ünvan</span>
+            <select value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value as StaffTitle })}>
+              {visibleTitles.map((titleOption) => <option key={titleOption}>{titleOption}</option>)}
+            </select>
+          </label>
+          <label className="staff-field">
+            <span>Kadro Türü</span>
+            <select value={draft.cadre} onChange={(event) => setDraft({ ...draft, cadre: event.target.value as Cadre })}>
+              {cadres.map((cadre) => <option key={cadre}>{cadre}</option>)}
+            </select>
+          </label>
+          <label className="staff-field">
+            <span>Manuel Hedef Nöbet</span>
+            <input
+              placeholder="Otomatik hesaplansın"
+              type="number"
+              min="0"
+              step="0.5"
+              value={draft.manualTarget ?? ""}
+              onChange={(event) => setDraft({ ...draft, manualTarget: event.target.value ? Number(event.target.value) : undefined })}
+            />
+            <small>Boş bırakırsanız sistem otomatik hesaplar.</small>
+          </label>
+        </div>
+
+        <fieldset className="staff-duty-section">
+          <legend><BriefcaseMedical size={16} /> Görev Yetkileri</legend>
+          <div className="staff-duty-options">
+            {staffDuties.map((duty) => {
+              const checked = (draft.duties ?? []).includes(duty);
+              return (
+                <label key={duty} className={`staff-duty-card ${checked ? "selected" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(event) => setDraft({
+                      ...draft,
+                      duties: event.target.checked
+                        ? [...(draft.duties ?? []), duty]
+                        : (draft.duties ?? []).filter((item) => item !== duty),
+                    })}
+                  />
+                  <span>{staffDutyLabel(duty)}</span>
+                  <small>{duty === "chief" ? "Ekip yönetimi" : duty === "ysp" ? "Sağlık personeli" : "Ambulans sürücüsü"}</small>
+                </label>
+              );
+            })}
+          </div>
+          <p>Görev seçilmezse uygunluk personelin ünvanına göre otomatik belirlenir.</p>
+        </fieldset>
+
+        <div className="staff-editor-bottom">
+          <label className="staff-field staff-notes">
+            <span>Açıklama / Import Notu</span>
+            <textarea
+              placeholder="Personel hakkında gerekli notları yazın..."
+              value={draft.notes ?? ""}
+              onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
+            />
+          </label>
+          <label className={`staff-overtime-card ${draft.overtimeAllowed ? "selected" : ""}`}>
+            <input
+              type="checkbox"
+              checked={Boolean(draft.overtimeAllowed)}
+              onChange={(event) => setDraft({ ...draft, overtimeAllowed: event.target.checked })}
+            />
+            <span>
+              <strong>Fazla mesai talebi</strong>
+              <small>Personel fazla mesai listesine dahil edilsin.</small>
+            </span>
+          </label>
+        </div>
+
+        <div className="staff-editor-actions">
+          {editingId && <button type="button" onClick={resetForm}>Vazgeç</button>}
+          <button className="primary-button staff-submit">
+            {editingId ? <Save size={17} /> : <UserPlus size={17} />}
+            {editingId ? "Değişiklikleri Kaydet" : "Personeli Kaydet"}
+          </button>
+        </div>
       </form>
       <div className="panel table-panel">
         <div className="row-actions bulk-edit-actions">
