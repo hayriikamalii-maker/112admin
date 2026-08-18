@@ -34,10 +34,8 @@ npm install
 npm run dev
 ```
 
-İlk giriş bilgileri:
-
-- Admin: `admin` / `admin112`
-- Kullanıcı: `kullanici` / `112user`
+Kullanıcı hesapları Supabase Auth üzerinden yönetilir. İlk giriş veya parola
+sıfırlama bilgilerini sistem yöneticinizden alın; parolalar kaynak kodda tutulmaz.
 
 ## Build
 
@@ -67,11 +65,11 @@ Sonrasında `dist/` klasörünü Netlify, Vercel, Render Static Site, cPanel vey
 
 11245911.com için DNS Hostinger'e yönlü değilse önce domain DNS kayıtlarında Hostinger nameserver'larını tanımlayın veya A kaydını Hostinger IP adresine yönlendirin.
 
-Kalıcı veritabanı istenirse Supabase migration çalıştırıldıktan sonra uygulama localStorage yerine Supabase istemcisine bağlanacak şekilde genişletilmelidir.
+Uygulama verileri Supabase üzerinde saklanır; erişim Supabase Auth ve RLS ile korunur.
 
 ## Supabase
 
-İstenirse `supabase/migrations/202607220001_create_112_scheduler.sql` dosyasındaki migration çalıştırılarak kalıcı veritabanı altyapısı kurulabilir. Mevcut sürüm localStorage ile çalışır.
+Supabase şeması `supabase/migrations/` altındaki migration dosyalarıyla yönetilir. Uygulama localStorage'ı yalnızca eski verileri güvenli buluta bir kez taşımak için okuyabilir; kalıcı kayıt bulutta yapılır.
 
 
 .
