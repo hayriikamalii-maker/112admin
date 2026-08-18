@@ -37,6 +37,10 @@ export interface UserActivityLog {
   browser?: string;
   user_agent?: string;
   screen_size?: string;
+  ip_address?: string;
+  country?: string;
+  city?: string;
+  datacenter?: string;
   session_id?: string;
 }
 
