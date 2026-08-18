@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { migrateState } from "./storage";
-import type { ActivityActionType, AppState, UserActivityLog } from "./types";
+import type { ActivityActionType, AppState, UserActivityLog, UserRole } from "./types";
 
 const remoteStateId = "main";
 const authEmailDomain = "auth.11245911.com";
@@ -103,9 +103,9 @@ async function manageAuthUser(body: Record<string, unknown>) {
   return data;
 }
 
-export async function createAuthUser(username: string, password: string, role: "admin" | "user") { return manageAuthUser({ action: "create", username, password, role }); }
+export async function createAuthUser(username: string, password: string, role: UserRole, stationIds: string[]) { return manageAuthUser({ action: "create", username, password, role, stationIds }); }
 export async function resetAuthUserPassword(username: string, password: string) { return manageAuthUser({ action: "reset-password", username, password }); }
-export async function updateAuthUserRole(username: string, role: "admin" | "user") { return manageAuthUser({ action: "update-role", username, role }); }
+export async function updateAuthUserRole(username: string, role: UserRole, stationIds: string[]) { return manageAuthUser({ action: "update-role", username, role, stationIds }); }
 
 export async function loadRemoteState() {
   const { data, error } = await requireSupabase().from("app_state_snapshots").select("state").eq("id", remoteStateId).maybeSingle();
