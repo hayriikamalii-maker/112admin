@@ -1933,20 +1933,22 @@ input:disabled, select:disabled, textarea:disabled { border-color: #e2eaec; back
 }
 
 /* Premium binary controls: comfortably clickable without looking oversized. */
-input[type="checkbox"],
-input[type="radio"] {
-  width: 22px;
-  min-width: 22px;
-  height: 22px;
-  min-height: 22px;
+.app-shell input[type="checkbox"],
+.app-shell input[type="radio"] {
+  width: 22px !important;
+  min-width: 22px !important;
+  max-width: 22px !important;
+  height: 22px !important;
+  min-height: 22px !important;
+  max-height: 22px !important;
   margin: 0;
   accent-color: var(--primary, #0f8f83);
   cursor: pointer;
   vertical-align: middle;
 }
 
-input[type="checkbox"]:focus-visible,
-input[type="radio"]:focus-visible {
+.app-shell input[type="checkbox"]:focus-visible,
+.app-shell input[type="radio"]:focus-visible {
   outline: 3px solid rgba(15, 143, 131, 0.2);
   outline-offset: 3px;
 }
