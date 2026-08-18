@@ -1775,7 +1775,13 @@ textarea:hover { border-color: #b9ced2; }
 .ai-generation-timer svg { color: #0f8f83; animation: timerPulse 1.15s ease-in-out infinite; }
 .ai-generation-timer strong { min-width: 48px; font-variant-numeric: tabular-nums; font-size: 15px; letter-spacing: .04em; }
 .ai-generation-timer span { overflow: hidden; color: #476878; font-size: 12px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
+.ai-retry-card { display: grid; grid-template-columns: minmax(260px, 1fr) auto auto; align-items: center; gap: 12px; padding: 16px 18px; border: 1px solid rgba(217, 47, 66, .2); border-radius: 16px; background: linear-gradient(135deg, #fff8f8, #fff 58%, #edfafa); box-shadow: 0 14px 34px rgba(121, 31, 49, .09); }
+.ai-retry-card > div { display: grid; gap: 4px; }
+.ai-retry-card strong { color: #9d1830; font-size: 15px; }
+.ai-retry-card span { color: #5e7080; font-size: 13px; line-height: 1.45; }
+.ai-retry-card button { min-height: 42px; }
 @keyframes timerPulse { 50% { transform: scale(1.12); color: #e12e45; } }
+@media (max-width: 760px) { .ai-retry-card { grid-template-columns: 1fr 1fr; } .ai-retry-card > div { grid-column: 1 / -1; } }
 .schedule-tabs { border-color: rgb(15 118 110 / 10%); background: rgb(248 252 252 / 88%); box-shadow: 0 10px 30px rgb(15 47 63 / 5%); }
 .schedule-tabs button { border-color: transparent; background: transparent; box-shadow: none; }
 .schedule-tabs button.active { background: linear-gradient(135deg, #0f766e, #0d9488); box-shadow: 0 7px 18px rgb(15 118 110 / 18%); }
