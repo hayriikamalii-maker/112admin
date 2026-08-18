@@ -824,6 +824,17 @@ th {
   flex-wrap: wrap;
 }
 
+.bulk-edit-actions {
+  margin-bottom: 14px;
+  position: sticky;
+  left: 0;
+}
+
+.table-panel td input,
+.table-panel td select {
+  min-width: 130px;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
