@@ -15,6 +15,7 @@ export type LeaveType = | "Yıllık izin"
   | "Diğer";
 export type DutyRequestType = "want" | "avoid";
 export type DutyRole = "doctor" | "chief" | "ysp" | "driver";
+export type StaffDuty = "chief" | "ysp" | "driver";
 export type DriverShift = "day" | "night" | "full";
 export type UserRole = "admin" | "user";
 export type AiProvider = "gemini" | "groq" | "local";
@@ -32,6 +33,7 @@ export interface Staff {
   stationId: string;
   fullName: string;
   title: StaffTitle;
+  duties?: StaffDuty[];
   cadre: Cadre;
   active: boolean;
   manualTarget?: number;
