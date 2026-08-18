@@ -1,6 +1,6 @@
 import type { AppState } from "./types";
 
-const storageKey = "112-nobet-cizelgesi-state-v1";
+const legacyStorageKey = "112-nobet-cizelgesi-state-v1";
 
 const defaultScheduleRulesText = `- A1 istasyonda ekip şefine öncelikle doktor yazılır; doktor yoksa paramedik kullanılır.
 - A2 istasyonda ekip şefine öncelikle memur paramedik yazılır; gerekirse sürücü paramedik kullanılır.
@@ -27,19 +27,19 @@ export function createInitialState(): AppState {
       {
         id: adminId,
         username: "admin",
-        password: "admin112",
+        password: "",
         fullName: "Sistem Yöneticisi",
         role: "admin",
         active: true,
         stationIds: [stationId],
         aiProviders: ["local"],
         canImport: true,
-        mustChangePassword: false,
+        mustChangePassword: true,
       },
       {
         id: userId,
         username: "kullanici",
-        password: "112user",
+        password: "",
         fullName: "İstasyon Kullanıcısı",
         role: "user",
         active: true,
@@ -107,19 +107,19 @@ export function migrateState(state: Partial<AppState>): AppState {
           {
             id: crypto.randomUUID(),
             username: "admin",
-            password: "admin112",
+            password: "",
             fullName: "Sistem Yöneticisi",
             role: "admin",
             active: true,
             stationIds: stations.map((station) => station.id),
             aiProviders: ["local"],
             canImport: true,
-            mustChangePassword: false,
+            mustChangePassword: true,
           },
           {
             id: crypto.randomUUID(),
             username: "kullanici",
-            password: "112user",
+            password: "",
             fullName: "İstasyon Kullanıcısı",
             role: "user",
             active: true,
@@ -153,12 +153,16 @@ export function migrateState(state: Partial<AppState>): AppState {
 }
 
 export function loadState() {
-  const raw = localStorage.getItem(storageKey);
-  if (!raw) return createInitialState();
+  return createInitialState();
+}
+
+export function loadLegacyState() {
+  const raw = localStorage.getItem(legacyStorageKey);
+  if (!raw) return null;
   try {
     return parseStateBackup(raw);
   } catch {
-    return createInitialState();
+    return null;
   }
 }
 
@@ -166,10 +170,6 @@ export function parseStateBackup(raw: string) {
   return migrateState(JSON.parse(raw) as Partial<AppState>);
 }
 
-export function saveState(state: AppState) {
-  localStorage.setItem(storageKey, JSON.stringify(state));
-}
-
-export function clearState() {
-  localStorage.removeItem(storageKey);
+export function clearLegacyState() {
+  localStorage.removeItem(legacyStorageKey);
 }

@@ -3,16 +3,55 @@ import { migrateState } from "./storage";
 import type { AppState } from "./types";
 
 const remoteStateId = "main";
+const authEmailDomain = "auth.11245911.com";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_ANON_KEY) as string | undefined;
 
-export const supabaseEnabled = Boolean(supabaseUrl && supabaseAnonKey && !supabaseAnonKey.includes("buraya"));
+export const supabaseEnabled = Boolean(supabaseUrl && supabaseKey && !supabaseKey.includes("buraya"));
 
-const supabase = supabaseEnabled ? createClient(supabaseUrl!, supabaseAnonKey!) : null;
+const supabase = supabaseEnabled
+  ? createClient(supabaseUrl!, supabaseKey!, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } })
+  : null;
+
+function normalizeUsername(username: string) {
+  return username.trim().toLocaleLowerCase("tr-TR").replace(/[^a-z0-9._-]/g, "");
+}
+
+function usernameEmail(username: string) { return `${normalizeUsername(username)}@${authEmailDomain}`; }
+function usernameFromEmail(email?: string) { return email?.endsWith(`@${authEmailDomain}`) ? email.slice(0, -(`@${authEmailDomain}`.length)) : ""; }
+function requireSupabase() { if (!supabase) throw new Error("Supabase yapılandırması eksik."); return supabase; }
+
+export async function signIn(username: string, password: string) {
+  const client = requireSupabase();
+  const normalized = normalizeUsername(username);
+  if (!normalized) throw new Error("Kullanıcı adı geçersiz.");
+  const { data, error } = await client.auth.signInWithPassword({ email: usernameEmail(normalized), password });
+  if (error) throw error;
+  return usernameFromEmail(data.user.email) || normalized;
+}
+
+export async function getAuthenticatedUsername() {
+  if (!supabase) return "";
+  const { data, error } = await supabase.auth.getUser();
+  return error || !data.user ? "" : usernameFromEmail(data.user.email);
+}
+
+export async function signOut() { if (supabase) { const { error } = await supabase.auth.signOut(); if (error) throw error; } }
+export async function changePassword(password: string) { const { error } = await requireSupabase().auth.updateUser({ password }); if (error) throw error; }
+
+async function manageAuthUser(body: Record<string, unknown>) {
+  const { data, error } = await requireSupabase().functions.invoke("admin-users", { body });
+  if (error) throw error;
+  if (data?.error) throw new Error(String(data.error));
+  return data;
+}
+
+export async function createAuthUser(username: string, password: string, role: "admin" | "user") { return manageAuthUser({ action: "create", username, password, role }); }
+export async function resetAuthUserPassword(username: string, password: string) { return manageAuthUser({ action: "reset-password", username, password }); }
+export async function updateAuthUserRole(username: string, role: "admin" | "user") { return manageAuthUser({ action: "update-role", username, role }); }
 
 export async function loadRemoteState() {
-  if (!supabase) return null;
-  const { data, error } = await supabase.from("app_state_snapshots").select("state").eq("id", remoteStateId).maybeSingle();
+  const { data, error } = await requireSupabase().from("app_state_snapshots").select("state").eq("id", remoteStateId).maybeSingle();
   if (error) throw error;
   const snapshot = data?.state as Partial<AppState> | undefined;
   if (!snapshot || Object.keys(snapshot).length === 0 || !snapshot.stations?.length || !snapshot.users?.length) return null;
@@ -20,11 +59,7 @@ export async function loadRemoteState() {
 }
 
 export async function saveRemoteState(state: AppState) {
-  if (!supabase) return;
-  const { error } = await supabase.from("app_state_snapshots").upsert({
-    id: remoteStateId,
-    state,
-    updated_at: new Date().toISOString(),
-  });
+  const cloudState: AppState = { ...state, users: state.users.map((user) => ({ ...user, password: "" })) };
+  const { error } = await requireSupabase().from("app_state_snapshots").upsert({ id: remoteStateId, state: cloudState, updated_at: new Date().toISOString() });
   if (error) throw error;
 }
