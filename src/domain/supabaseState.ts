@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { migrateState } from "./storage";
-import type { AppState } from "./types";
+import type { ActivityActionType, AppState, UserActivityLog } from "./types";
 
 const remoteStateId = "main";
 const authEmailDomain = "auth.11245911.com";
@@ -38,6 +38,55 @@ export async function getAuthenticatedUsername() {
 
 export async function signOut() { if (supabase) { const { error } = await supabase.auth.signOut(); if (error) throw error; } }
 export async function changePassword(password: string) { const { error } = await requireSupabase().auth.updateUser({ password }); if (error) throw error; }
+
+export interface ActivityLogInput {
+  username: string;
+  actionType: ActivityActionType;
+  actionLabel: string;
+  route: string;
+  target?: string;
+  details?: Record<string, unknown>;
+  deviceType?: string;
+  deviceName?: string;
+  operatingSystem?: string;
+  browser?: string;
+  userAgent?: string;
+  screenSize?: string;
+  sessionId?: string;
+}
+
+export async function logUserActivity(input: ActivityLogInput) {
+  if (!supabase) return;
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  if (authError || !authData.user) return;
+  const { error } = await supabase.from("user_activity_logs").insert({
+    user_id: authData.user.id,
+    username: input.username,
+    action_type: input.actionType,
+    action_label: input.actionLabel.slice(0, 240),
+    route: input.route,
+    target: input.target?.slice(0, 240),
+    details: input.details ?? {},
+    device_type: input.deviceType,
+    device_name: input.deviceName,
+    operating_system: input.operatingSystem,
+    browser: input.browser,
+    user_agent: input.userAgent,
+    screen_size: input.screenSize,
+    session_id: input.sessionId,
+  });
+  if (error) throw error;
+}
+
+export async function loadUserActivityLogs(limit = 1000) {
+  const { data, error } = await requireSupabase()
+    .from("user_activity_logs")
+    .select("*")
+    .order("occurred_at", { ascending: false })
+    .limit(Math.min(Math.max(limit, 1), 5000));
+  if (error) throw error;
+  return (data ?? []) as UserActivityLog[];
+}
 
 async function manageAuthUser(body: Record<string, unknown>) {
   const { data, error } = await requireSupabase().functions.invoke("admin-users", { body });
