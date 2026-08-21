@@ -1047,7 +1047,7 @@ async function refineScheduleWithGemini(params: {
     const controller = new AbortController();
     const abortFromCaller = () => controller.abort();
     params.signal?.addEventListener("abort", abortFromCaller, { once: true });
-    const timeout = window.setTimeout(() => controller.abort(), 30_000);
+    const timeout = window.setTimeout(() => controller.abort(), 195_000);
     try {
       const response = await fetch("/api/schedule-refine", {
         method: "POST",
