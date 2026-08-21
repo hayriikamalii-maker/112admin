@@ -120,6 +120,7 @@ const navItems = [
   ["/cizelgeler", "Çizelgeler", FileText],
   ["/kullanici-loglari", "Log Kayıtları", History],
   ["/kullanicilar", "Kullanıcılar", ShieldCheck],
+  ["/hesap", "Hesap / Şifre", KeyRound],
   ["/ayarlar", "Ayarlar", Settings],
 ] as const;
 
@@ -166,6 +167,7 @@ const routeLabels: Record<string, string> = {
   "/ayarlar": "Ayarlar",
   "/kullanici-loglari": "Log Kayıtları",
   "/kullanicilar": "Kullanıcılar",
+  "/hesap": "Hesap / Şifre",
 };
 
 function controlContext(element: HTMLElement) {
@@ -1804,6 +1806,15 @@ function App() {
         )}
         {path === "/kullanici-loglari" && canViewLogs(currentUser) && <ActivityLogsPage state={state} currentUser={currentUser} />}
         {path === "/kullanicilar" && isAdmin(currentUser) && <SettingsPage mode="users" state={state} setState={setState} year={year} holidays={holidays} />}
+        {path === "/hesap" && (
+          <AccountPage
+            user={currentUser}
+            onPasswordChanged={() => setState((current) => ({
+              ...current,
+              users: current.users.map((user) => user.id === currentUser.id ? { ...user, mustChangePassword: false } : user),
+            }))}
+          />
+        )}
         {path === "/ayarlar" && isAdmin(currentUser) && <SettingsPage mode="settings" state={state} setState={setState} year={year} holidays={holidays} />}
         <div className="app-credit">Bu uygulama Paramedic HK tarafından tasarlanmıştır.</div>
       </main>
@@ -1865,6 +1876,7 @@ function LoginPage({ onLogin }: { onLogin: (username: string, password: string) 
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showRecoveryHelp, setShowRecoveryHelp] = useState(false);
   return (
     <main className="login-page">
       <div className="login-background" aria-hidden="true">
@@ -1924,9 +1936,54 @@ function LoginPage({ onLogin }: { onLogin: (username: string, password: string) 
           <KeyRound size={16} />
           {loading ? "Giriş yapılıyor..." : "Giriş Yap"}
         </button>
+        <button type="button" className="login-recovery-link" onClick={() => setShowRecoveryHelp((current) => !current)}>
+          <KeyRound size={15} /> Şifremi Unuttum / Giriş Desteği
+        </button>
+        {showRecoveryHelp && (
+          <div className="login-recovery-card">
+            <strong>Güvenli şifre yenileme</strong>
+            <span>Başka bir cihazda oturumunuz açıksa menüden “Hesap / Şifre” bölümüne girin. Oturumunuz yoksa bir Admin, Kullanıcılar bölümünden hesabınıza geçici şifre tanımlayabilir.</span>
+          </div>
+        )}
         <p className="login-credit">Bu uygulama Paramedic HK tarafından tasarlanmıştır.</p>
       </form>
     </main>
+  );
+}
+
+function AccountPage({ user, onPasswordChanged }: { user: AppUser; onPasswordChanged: () => void }) {
+  const [password, setPassword] = useState("");
+  const [again, setAgain] = useState("");
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
+  return (
+    <section className="page account-page">
+      <div className="page-heading-row">
+        <div><span className="eyebrow">Hesap güvenliği</span><h2>Hesap / Şifre</h2><p>Açık ve doğrulanmış oturumunuzdan yeni şifrenizi güvenle belirleyin.</p></div>
+        <div className="account-identity"><KeyRound size={22} /><div><strong>{user.fullName || user.username}</strong><span>@{user.username} · {roleName(user.role)}</span></div></div>
+      </div>
+      <form className="panel account-password-card" onSubmit={async (event) => {
+        event.preventDefault();
+        setNotice("");
+        if (password.length < 8) return setNotice("Yeni şifre en az 8 karakter olmalı.");
+        if (password !== again) return setNotice("Yazdığınız iki şifre aynı değil.");
+        setSaving(true);
+        try {
+          await changePassword(password);
+          onPasswordChanged();
+          setPassword(""); setAgain("");
+          setNotice("Şifreniz başarıyla değiştirildi. Yeni şifrenizi güvenli bir yerde saklayın.");
+        } catch { setNotice("Şifre değiştirilemedi. Oturumunuzu yenileyip tekrar deneyin."); }
+        finally { setSaving(false); }
+      }}>
+        <div className="account-security-icon"><ShieldCheck size={34} /></div>
+        <div><h3>Yeni şifre belirleyin</h3><p className="helper-text">Eski şifre gerekmez; bu işlem yalnızca açık ve doğrulanmış oturumda çalışır.</p></div>
+        <label>Yeni şifre<input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
+        <label>Yeni şifre tekrar<input type="password" autoComplete="new-password" value={again} onChange={(event) => setAgain(event.target.value)} required /></label>
+        {notice && <p className={notice.includes("başarıyla") ? "save-notice" : "form-error"}>{notice}</p>}
+        <button className="primary-button" disabled={saving}><KeyRound size={17} />{saving ? "Şifre değiştiriliyor…" : "Yeni Şifreyi Kaydet"}</button>
+      </form>
+    </section>
   );
 }
 
