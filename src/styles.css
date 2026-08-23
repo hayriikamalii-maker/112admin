@@ -2146,6 +2146,21 @@ input:disabled, select:disabled, textarea:disabled { border-color: #e2eaec; back
 }
 .login-recovery-card strong { color: #12384a; }
 .login-recovery-card span { font-size: 13px; }
+.recovery-username-input { width: 100%; min-height: 46px; margin-top: 6px; }
+.recovery-request-button { min-height: 46px; border: 0; border-radius: 12px; color: #fff; background: linear-gradient(135deg, #0f8f83, #0b716d); font-weight: 850; cursor: pointer; box-shadow: 0 10px 22px rgba(15,143,131,.2); }
+.recovery-request-button:disabled { opacity: .55; cursor: wait; }
+.recovery-notice { padding: 10px 12px; border-radius: 10px; color: #14554f; background: rgba(255,255,255,.75); font-weight: 700; }
+.sidebar nav button { position: relative; }
+.nav-notification-badge { display: inline-grid; place-items: center; min-width: 23px; height: 23px; margin-left: auto; padding: 0 6px; border: 2px solid rgba(255,255,255,.8); border-radius: 999px; color: #fff; background: linear-gradient(135deg,#ef4444,#b91c1c); font-size: 11px; font-weight: 900; box-shadow: 0 5px 14px rgba(220,38,38,.35); }
+.password-reset-admin-panel { display: grid; gap: 16px; margin-bottom: 20px; border-color: rgba(220,38,38,.2); background: linear-gradient(135deg,rgba(255,255,255,.99),rgba(255,245,245,.96)); }
+.password-reset-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.password-reset-heading h3 { margin: 2px 0 0; }
+.password-reset-count { display: grid; place-items: center; min-width: 42px; height: 42px; border-radius: 14px; color: #fff; background: linear-gradient(135deg,#ef4444,#b91c1c); font-weight: 900; }
+.password-reset-list { display: grid; gap: 10px; }
+.password-reset-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid rgba(15,143,131,.14); border-radius: 15px; background: rgba(255,255,255,.88); }
+.password-reset-row strong,.password-reset-row span { display: block; }
+.password-reset-row span { margin-top: 3px; color: var(--muted); font-size: 12px; }
+@media (max-width:720px){.password-reset-row{align-items:stretch;flex-direction:column}.password-reset-row button{width:100%}}
 .account-page { display: grid; gap: 20px; width: min(1050px, 100%); margin: 0 auto; }
 .account-identity { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .account-identity > svg {

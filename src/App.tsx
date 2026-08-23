@@ -51,6 +51,9 @@ import {
   loadRemoteState,
   loadUserActivityLogs,
   logUserActivity,
+  listPasswordResetRequests,
+  approvePasswordResetRequest,
+  requestPasswordReset,
   resetAuthUserPassword,
   saveRemoteState,
   signIn,
@@ -58,6 +61,7 @@ import {
   supabaseEnabled,
   updateAuthUserRole,
 } from "./domain/supabaseState";
+import type { PasswordResetRequest } from "./domain/supabaseState";
 import type {
   AiProvider,
   AppUser,
@@ -1211,6 +1215,20 @@ function App() {
   }, [remoteReady, sessionUsername, state]);
 
   const currentUser = state.users.find((user) => user.username === sessionUsername && user.active);
+  const [passwordResetRequests, setPasswordResetRequests] = useState<PasswordResetRequest[]>([]);
+  useEffect(() => {
+    if (!isAdmin(currentUser)) {
+      setPasswordResetRequests([]);
+      return;
+    }
+    let cancelled = false;
+    const refresh = () => void listPasswordResetRequests()
+      .then((requests) => { if (!cancelled) setPasswordResetRequests(requests); })
+      .catch(() => undefined);
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [currentUser?.id, currentUser?.role]);
   const accessibleRealStations = isAdmin(currentUser)
     ? state.stations
     : state.stations.filter((station) => currentUser?.stationIds.includes(station.id));
@@ -1680,6 +1698,11 @@ function App() {
               <button key={href} className={path === href ? "active" : ""} onClick={() => navigate(href)}>
                 <Icon size={18} />
                 {label}
+                {href === "/kullanicilar" && passwordResetRequests.length > 0 && (
+                  <span className="nav-notification-badge" aria-label={`${passwordResetRequests.length} şifre sıfırlama talebi`}>
+                    {passwordResetRequests.length}
+                  </span>
+                )}
               </button>
             ))}
         </nav>
@@ -1805,7 +1828,7 @@ function App() {
           <ArchivePage state={state} setState={setState} stationIds={accessibleRealStations.map((station) => station.id)} setYear={setYear} setMonth={setMonth} />
         )}
         {path === "/kullanici-loglari" && canViewLogs(currentUser) && <ActivityLogsPage state={state} currentUser={currentUser} />}
-        {path === "/kullanicilar" && isAdmin(currentUser) && <SettingsPage mode="users" state={state} setState={setState} year={year} holidays={holidays} />}
+        {path === "/kullanicilar" && isAdmin(currentUser) && <SettingsPage mode="users" state={state} setState={setState} year={year} holidays={holidays} passwordResetRequests={passwordResetRequests} setPasswordResetRequests={setPasswordResetRequests} />}
         {path === "/hesap" && (
           <AccountPage
             user={currentUser}
@@ -1877,6 +1900,9 @@ function LoginPage({ onLogin }: { onLogin: (username: string, password: string) 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showRecoveryHelp, setShowRecoveryHelp] = useState(false);
+  const [recoveryUsername, setRecoveryUsername] = useState("");
+  const [recoveryNotice, setRecoveryNotice] = useState("");
+  const [requestingRecovery, setRequestingRecovery] = useState(false);
   return (
     <main className="login-page">
       <div className="login-background" aria-hidden="true">
@@ -1941,8 +1967,22 @@ function LoginPage({ onLogin }: { onLogin: (username: string, password: string) 
         </button>
         {showRecoveryHelp && (
           <div className="login-recovery-card">
-            <strong>Güvenli şifre yenileme</strong>
-            <span>Başka bir cihazda oturumunuz açıksa menüden “Hesap / Şifre” bölümüne girin. Oturumunuz yoksa bir Admin, Kullanıcılar bölümünden hesabınıza geçici şifre tanımlayabilir.</span>
+            <strong>Admin onaylı şifre yenileme</strong>
+            <span>Kullanıcı adınızı girin. Talebiniz yalnızca yöneticilerin görebildiği Kullanıcılar ekranına iletilir.</span>
+            <input className="recovery-username-input" value={recoveryUsername} onChange={(event) => setRecoveryUsername(event.target.value)} placeholder="Kullanıcı adı" autoComplete="username" />
+            <button type="button" className="recovery-request-button" disabled={requestingRecovery || !recoveryUsername.trim()} onClick={async () => {
+              setRequestingRecovery(true);
+              setRecoveryNotice("");
+              try {
+                await requestPasswordReset(recoveryUsername);
+                setRecoveryNotice("Talebiniz yöneticiye iletildi. Onaylandığında geçici şifreniz kullanıcıadınız.112 olacaktır.");
+              } catch {
+                setRecoveryNotice("Talep şu anda iletilemedi. Lütfen kısa süre sonra yeniden deneyin.");
+              } finally {
+                setRequestingRecovery(false);
+              }
+            }}>{requestingRecovery ? "Talep gönderiliyor..." : "Şifre Sıfırlama Talebi Gönder"}</button>
+            {recoveryNotice && <span className="recovery-notice">{recoveryNotice}</span>}
           </div>
         )}
         <p className="login-credit">Bu uygulama Paramedic HK tarafından tasarlanmıştır.</p>
@@ -4499,6 +4539,8 @@ function SettingsPage(props: {
   setState: Dispatch<SetStateAction<AppState>>;
   year: number;
   holidays: PublicHoliday[];
+  passwordResetRequests?: PasswordResetRequest[];
+  setPasswordResetRequests?: Dispatch<SetStateAction<PasswordResetRequest[]>>;
 }) {
   const [date, setDate] = useState(`${props.year}-01-01`);
   const [name, setName] = useState("");
@@ -4702,6 +4744,33 @@ function SettingsPage(props: {
       </div>
       )}
       {props.mode === "users" && (
+      <>
+      {(props.passwordResetRequests?.length ?? 0) > 0 && (
+        <div className="panel password-reset-admin-panel">
+          <div className="password-reset-heading">
+            <div><span className="eyebrow">Güvenlik bildirimi</span><h3>Bekleyen Şifre Sıfırlama Talepleri</h3></div>
+            <span className="password-reset-count">{props.passwordResetRequests?.length}</span>
+          </div>
+          <div className="password-reset-list">
+            {props.passwordResetRequests?.map((request) => (
+              <div className="password-reset-row" key={request.id}>
+                <div><strong>@{request.username}</strong><span>{new Date(request.requested_at).toLocaleString("tr-TR")}</span></div>
+                <button type="button" className="primary-button" onClick={async () => {
+                  setUserNotice("");
+                  try {
+                    const result = await approvePasswordResetRequest(request.id);
+                    props.setPasswordResetRequests?.((current) => current.filter((item) => item.id !== request.id));
+                    props.setState((current) => ({ ...current, users: current.users.map((user) => user.username.toLocaleLowerCase("tr-TR") === result.username.toLocaleLowerCase("tr-TR") ? { ...user, mustChangePassword: true, active: true } : user) }));
+                    setUserNotice(`@${result.username} için geçici şifre: ${result.temporaryPassword}. Kullanıcı ilk girişte yeni şifre belirleyecek.`);
+                  } catch {
+                    setUserNotice("Şifre sıfırlama talebi onaylanamadı. Lütfen tekrar deneyin.");
+                  }
+                }}>Şifreyi Sıfırla</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="panel user-management-panel">
         <h3>Kullanıcı ve Yetki Yönetimi</h3>
         <form
@@ -5131,6 +5200,7 @@ function SettingsPage(props: {
           </div>
         )}
       </div>
+      </>
       )}
     </section>
   );

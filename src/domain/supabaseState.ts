@@ -107,6 +107,34 @@ export async function createAuthUser(username: string, password: string, role: U
 export async function resetAuthUserPassword(username: string, password: string) { return manageAuthUser({ action: "reset-password", username, password }); }
 export async function updateAuthUserRole(username: string, role: UserRole, stationIds: string[]) { return manageAuthUser({ action: "update-role", username, role, stationIds }); }
 
+export interface PasswordResetRequest {
+  id: string;
+  username: string;
+  status: "pending" | "resolved" | "dismissed";
+  requested_at: string;
+}
+
+async function passwordResetAction(body: Record<string, unknown>) {
+  const { data, error } = await requireSupabase().functions.invoke("password-reset-requests", { body });
+  if (error) throw error;
+  if (!data?.ok) throw new Error(String(data?.error || "Şifre sıfırlama işlemi tamamlanamadı."));
+  return data;
+}
+
+export async function requestPasswordReset(username: string) {
+  await passwordResetAction({ action: "request", username });
+}
+
+export async function listPasswordResetRequests(): Promise<PasswordResetRequest[]> {
+  const data = await passwordResetAction({ action: "list" });
+  return (data.requests ?? []) as PasswordResetRequest[];
+}
+
+export async function approvePasswordResetRequest(id: string): Promise<{ username: string; temporaryPassword: string }> {
+  const data = await passwordResetAction({ action: "approve", id });
+  return { username: String(data.username), temporaryPassword: String(data.temporaryPassword) };
+}
+
 export async function loadRemoteState() {
   const { data, error } = await requireSupabase().from("app_state_snapshots").select("state").eq("id", remoteStateId).maybeSingle();
   if (error) throw error;
