@@ -15,7 +15,7 @@ export async function onRequestPost(context) {
     if (!prompt) return json({ ok: false, message: "Nöbet planlama verisi eksik." }, 400);
     if (prompt.length > 900_000) return json({ ok: false, message: "Planlama verisi Gemini sınırını aşıyor." }, 413);
 
-    const models = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
+    const models = ["gemini-3.5-flash", "gemini-3.5-flash-lite"];
     let lastMessage = "Gemini yanıt vermedi.";
     let lastStatus = 422;
 
