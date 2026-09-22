@@ -1047,7 +1047,7 @@ async function refineScheduleWithGemini(params: {
   ].join("\n");
   let raw = "";
   let lastError = "Gemini yanıt vermedi";
-  for (const model of ["gemini-2.5-flash"]) {
+  for (const requestLabel of ["Gemini güncel model"]) {
     const controller = new AbortController();
     const abortFromCaller = () => controller.abort();
     params.signal?.addEventListener("abort", abortFromCaller, { once: true });
@@ -1061,16 +1061,16 @@ async function refineScheduleWithGemini(params: {
       });
       const proxyData = (await response.json().catch(() => null)) as { ok?: boolean; text?: string; model?: string; message?: string } | null;
       if (!response.ok) {
-        lastError = proxyData?.message ?? `${model}: HTTP ${response.status}`;
+        lastError = proxyData?.message ?? `${requestLabel}: HTTP ${response.status}`;
         continue;
       }
       raw = proxyData?.text ?? "";
       if (raw.trim()) break;
-      lastError = `${model}: boş yanıt`;
+      lastError = `${proxyData?.model ?? requestLabel}: boş yanıt`;
     } catch (error) {
       lastError = error instanceof DOMException && error.name === "AbortError"
-        ? `${model}: zaman aşımı`
-        : `${model}: ${error instanceof Error ? error.message : "bağlantı hatası"}`;
+        ? `${requestLabel}: zaman aşımı`
+        : `${requestLabel}: ${error instanceof Error ? error.message : "bağlantı hatası"}`;
     } finally {
       window.clearTimeout(timeout);
       params.signal?.removeEventListener("abort", abortFromCaller);

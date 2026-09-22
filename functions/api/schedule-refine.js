@@ -15,7 +15,7 @@ export async function onRequestPost(context) {
     if (!prompt) return json({ ok: false, message: "Nöbet planlama verisi eksik." }, 400);
     if (prompt.length > 900_000) return json({ ok: false, message: "Planlama verisi Gemini sınırını aşıyor." }, 413);
 
-    const models = ["gemini-3.5-flash", "gemini-3.5-flash-lite"];
+    // Only current, generally available models are used here. Keeping model\n    // selection on the server prevents an old browser bundle from requesting\n    // a retired Gemini model.\n    const models = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"];
     let lastMessage = "Gemini yanıt vermedi.";
     let lastStatus = 422;
 
@@ -29,7 +29,7 @@ export async function onRequestPost(context) {
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: { responseMimeType: "application/json", temperature: 0.1, maxOutputTokens: 32768 },
+              generationConfig: { responseMimeType: "application/json", maxOutputTokens: 65536 },
             }),
             signal: controller.signal,
           });
@@ -42,7 +42,7 @@ export async function onRequestPost(context) {
           } else {
             lastMessage = data?.error?.message || `${model} HTTP ${response.status}`;
             lastStatus = response.status === 429 ? 429 : response.status >= 500 ? 503 : 422;
-            if (![429, 500, 502, 503, 504].includes(response.status)) break;
+            // A key may not yet have access to every current model. Try the\n            // next model for 400/403/404, and retry only transient failures.\n            if (![429, 500, 502, 503, 504].includes(response.status)) break;
           }
         } catch (error) {
           lastMessage = error?.name === "AbortError" ? `${model} yanıt süresini aştı.` : `${model}: ${error instanceof Error ? error.message : "bağlantı kurulamadı"}`;
